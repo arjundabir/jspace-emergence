@@ -15,16 +15,10 @@ Two traps make a naive ``from_pretrained(..., revision="stepN")`` wrong here:
   loading is unsafe: the transported residual ``J_l @ h`` can exceed fp16's
   65504 ceiling, and inf -> LayerNorm -> NaN logits makes a rank readout
   return 1 for every token -- a silent perfect score instead of a crash.
-
-Run as a script to prefetch checkpoints into the Hugging Face cache:
-
-    python -m lens.load_models --models 2.8b,6.9b --steps 0,143000
 """
 
 from __future__ import annotations
 
-import argparse
-import sys
 import time
 import warnings
 from pathlib import Path
@@ -52,10 +46,6 @@ BIN_PATTERNS = [
     "pytorch_model*",
 ]
 _probe_cache: dict[tuple[str, str], bool] = {}
-
-
-def model_id_for(size: str) -> str:
-    return f"EleutherAI/pythia-{size}"
 
 
 def resolve_model_source(model_id: str, revision: str | None) -> tuple[str, str | None]:
@@ -137,49 +127,3 @@ def load_model(model_id: str, revision: str | None, device: str | torch.device |
         source, revision=source_revision, dtype=torch.float32
     )
     return hf_model.to(resolved).eval(), tokenizer
-
-
-PREFETCH_PATTERNS = [
-    "config.json", "generation_config.json", "tokenizer*", "special_tokens*",
-    "*.safetensors*", "pytorch_model*",
-]
-
-
-def prefetch(model_id: str, revision: str) -> None:
-    """Ensure the revision's weights are local without loading them."""
-    source, source_revision = resolve_model_source(model_id, revision)
-    if source_revision is not None:  # still a hub reference, not a resolved local dir
-        snapshot_download(source, revision=source_revision, allow_patterns=PREFETCH_PATTERNS)
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Prefetch Pythia checkpoints into the Hugging Face cache"
-    )
-    parser.add_argument("--models", default=",".join(MODELS))
-    parser.add_argument("--steps", default=",".join(str(s) for s in CHECKPOINT_STEPS))
-    args = parser.parse_args()
-
-    sizes = [s.strip() for s in args.models.split(",")]
-    unknown = [s for s in sizes if s not in MODELS]
-    if unknown:
-        parser.error(f"unknown model(s) {unknown}; choose from {MODELS}")
-    steps = [int(s) for s in args.steps.split(",")]
-
-    failed: list[str] = []
-    for size in sizes:
-        for step in steps:
-            revision = f"step{step}"
-            try:
-                prefetch(model_id_for(size), revision)
-                print(f"  {size} {revision} ready", flush=True)
-            except Exception as error:  # one bad step must not abort the sweep
-                failed.append(f"{size}@{revision}")
-                print(f"  {size} {revision} FAILED: {error}", file=sys.stderr, flush=True)
-    if failed:
-        print(f"{len(failed)} failed: {', '.join(failed)}", file=sys.stderr)
-    return 1 if failed else 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

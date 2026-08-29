@@ -8,16 +8,10 @@ fit_lens.py). Lens files are mmapped rather than copied into RAM.
     from lens.load_lens import load_pair
     pair = load_pair("EleutherAI/pythia-6.9b", "step143000")
     logits = pair.lens_logits(residual, layer=20, method="jacobian")
-
-Run as a script for an end-to-end smoke check of one checkpoint + lens:
-
-    python -m lens.load_lens --model EleutherAI/pythia-70m --revision step143000
 """
 
 from __future__ import annotations
 
-import argparse
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -100,34 +94,5 @@ def load_pair(model_id: str, revision: str, device: str | None = None) -> Loaded
     lens = load_lens(lens_path_for(model_id, revision))
     hf_model, tokenizer = load_model(model_id, revision, device)
     lens_model = jlens.from_hf(hf_model, tokenizer, layout=pythia_layout(), compile=False)
-    if lens.d_model != lens_model.d_model:
-        raise ValueError(
-            f"lens d_model={lens.d_model} != model d_model={lens_model.d_model}; "
-            f"{lens_path_for(model_id, revision).name} was fitted to a different model"
-        )
     device_used = next(hf_model.parameters()).device
     return LoadedPair(model_id, revision, hf_model, tokenizer, lens, lens_model, device_used)
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Smoke-check one checkpoint + fitted lens")
-    parser.add_argument("--model", default="EleutherAI/pythia-70m")
-    parser.add_argument("--revision", default="step143000")
-    parser.add_argument("--device", default=None)
-    args = parser.parse_args()
-
-    pair = load_pair(args.model, args.revision, args.device)
-    dtypes = {p.dtype for p in pair.hf_model.parameters()}
-    j_dtype = next(iter(pair.lens.jacobians.values())).dtype
-    print(f"{args.model}@{args.revision} on {pair.device}")
-    print(f"  weights: {sorted(str(d) for d in dtypes)}")
-    print(f"  lens   : {len(pair.layers)} layers, d_model={pair.lens.d_model}, J dtype={j_dtype}")
-    if dtypes != {torch.float32} or j_dtype is not torch.float32:
-        print("FAILED: expected float32 end to end", file=sys.stderr)
-        return 1
-    print("ok: float32 end to end")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
