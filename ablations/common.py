@@ -152,3 +152,106 @@ def kl_divergence(clean_logits: torch.Tensor, other_logits: torch.Tensor) -> flo
     log_p = clean_logits.float().log_softmax(dim=-1)
     log_q = other_logits.float().log_softmax(dim=-1)
     return float((log_p.exp() * (log_p - log_q)).sum(dim=-1))
+
+
+@dataclass(frozen=True)
+class Example:
+    """One prepared item: what to ablate, where to read out, what to score."""
+
+    input_ids_list: list[int]
+    readout_position: int
+    ablate_positions: list[int]
+    direction_token_id: int
+    intermediate: str
+    target: str
+    target_positions: list[int] | None = None  # whole-answer span, else None
+    rank_scorable: bool = True
+
+
+@dataclass(frozen=True)
+class Task:
+    """What distinguishes one ablation from the other five."""
+
+    name: str
+    slug: str
+    prepare_example: Callable[[dict, object], "Example | str"]  # str = skip reason
+    whole_answer: bool = False
+
+
+def prompt_final_prepare(item: dict, tokenizer) -> Example | str:
+    """Prompt only; readout = last prompt token; the concept scores itself."""
+    concept = item["intermediates"][0]
+    try:
+        concept_id, _ = first_single_token_id(tokenizer, concept)
+    except ValueError as exc:
+        return str(exc)
+    input_ids_list = tokenizer(
+        item["prompt"], return_tensors="pt", truncation=False
+    ).input_ids[0].tolist()
+    return Example(
+        input_ids_list=input_ids_list,
+        readout_position=len(input_ids_list) - 1,
+        ablate_positions=list(range(len(input_ids_list))),
+        direction_token_id=concept_id,
+        intermediate=concept,
+        target=concept,
+    )
+
+
+def _boundary_encode(item: dict, tokenizer, target: str) -> tuple[list[int], int]:
+    """Encode ``prompt + target`` offset-aligned; return ids and the target's first token index."""
+    encoded = tokenizer(
+        item["prompt"] + target,
+        return_tensors="pt",
+        return_offsets_mapping=True,
+        truncation=False,
+    )
+    input_ids_list = encoded.input_ids[0].tolist()
+    offsets = [tuple(x) for x in encoded.offset_mapping[0].tolist()]
+    boundary = len(item["prompt"])
+    target_first = next(i for i, (start, end) in enumerate(offsets) if end > boundary)
+    return input_ids_list, target_first
+
+
+def target_boundary_prepare(item: dict, tokenizer) -> Example | str:
+    """Readout at the token before ``target``; both intermediate and target single-token."""
+    target = item["target"]
+    intermediate = item["intermediates"][0]
+    try:
+        intermediate_id, _ = first_single_token_id(tokenizer, intermediate)
+        first_single_token_id(tokenizer, target)
+    except ValueError as exc:
+        return str(exc)
+    input_ids_list, target_first = _boundary_encode(item, tokenizer, target)
+    return Example(
+        input_ids_list=input_ids_list,
+        readout_position=target_first - 1,
+        ablate_positions=list(range(len(input_ids_list))),
+        direction_token_id=intermediate_id,
+        intermediate=intermediate,
+        target=target,
+    )
+
+
+def whole_answer_prepare(item: dict, tokenizer) -> Example | str:
+    """Readout before the target; the full target span is scored teacher-forced,
+    so a multi-token target stays usable as long as the intermediate is
+    single-token. Rank is additionally reported when the target is single-token.
+    """
+    intermediate = item["intermediates"][0]
+    target = item.get("target") or intermediate
+    try:
+        intermediate_id, _ = first_single_token_id(tokenizer, intermediate)
+    except ValueError as exc:
+        return str(exc)
+    input_ids_list, target_first = _boundary_encode(item, tokenizer, target)
+    return Example(
+        input_ids_list=input_ids_list,
+        readout_position=target_first - 1,
+        ablate_positions=list(range(len(input_ids_list))),
+        direction_token_id=intermediate_id,
+        intermediate=intermediate,
+        target=target,
+        target_positions=list(range(target_first, len(input_ids_list))),
+        rank_scorable=try_single_token_id(tokenizer, target) is not None,
+    )
