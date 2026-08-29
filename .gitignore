@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.cache/
+.env
+fits/
+results/

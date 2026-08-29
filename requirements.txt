@@ -1,0 +1,8 @@
+# Python 3.12. Exact versions used for the paper's runs.
+torch==2.12.1
+transformers==5.14.1
+huggingface_hub==1.27.0
+
+# Anthropic's Jacobian Lens, vendored verbatim from
+# github.com/anthropics/jacobian-lens @ 581d398 (Apache-2.0).
+-e ./jacobian-lens
