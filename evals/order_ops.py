@@ -10,7 +10,6 @@ _TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
 
 
 def number_to_words(value: int) -> str | None:
-    """English word form of a non-negative integer below 1000."""
     if value < 0:
         return None
     if value < 20:
@@ -37,7 +36,6 @@ OP_SYNONYMS = {
 
 
 def expand_synonyms(intermediate: str) -> list[str]:
-    """Expand an intermediate key into its accepted synonym set."""
     if intermediate in OP_SYNONYMS:
         return list(OP_SYNONYMS[intermediate])
     if intermediate.lstrip("-").isdigit():

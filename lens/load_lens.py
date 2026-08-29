@@ -14,7 +14,6 @@ FITS_ROOT = REPO_ROOT / "fits"
 
 
 def pythia_layout() -> Layout:
-    """Pythia is GPT-NeoX; jlens needs the module names spelled out."""
     return Layout(
         path="gpt_neox",
         layers="layers",
@@ -30,12 +29,6 @@ def lens_path_for(model_id: str, revision: str) -> Path:
 
 
 def load_lens(path: Path):
-    """mmap a fitted lens instead of copying it into RAM."""
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"{path} not found; download the released lens fits into fits/ "
-            f"or fit them with lens/fit_lens.py"
-        )
     checkpoint = torch.load(path, map_location="cpu", weights_only=True, mmap=True)
     return jlens.JacobianLens(
         jacobians=checkpoint["J"],
@@ -46,8 +39,6 @@ def load_lens(path: Path):
 
 @dataclass
 class LoadedPair:
-    """A checkpoint, its tokenizer, and the lens fitted to it."""
-
     model_id: str
     revision: str
     hf_model: object
@@ -62,13 +53,11 @@ class LoadedPair:
         return list(self.lens.source_layers)
 
     def jacobian(self, layer: int) -> torch.Tensor:
-        """J_l on the compute device, cached -- inner loops reuse it."""
         if layer not in self._jacobians:
             self._jacobians[layer] = self.lens.jacobians[layer].to(self.device, torch.float32)
         return self._jacobians[layer]
 
     def lens_logits(self, residual: torch.Tensor, layer: int, method: str = "jacobian"):
-        """Lens readout for residuals ``[..., d_model]`` taken at ``layer``."""
         x = residual.to(self.device, torch.float32)
         if method == "jacobian":
             x = x @ self.jacobian(layer).T
@@ -78,7 +67,6 @@ class LoadedPair:
 
 
 def load_pair(model_id: str, revision: str, device: str | None = None) -> LoadedPair:
-    """Load ``model_id@revision`` and its fitted lens, both float32."""
     lens = load_lens(lens_path_for(model_id, revision))
     hf_model, tokenizer = load_model(model_id, revision, device)
     lens_model = jlens.from_hf(hf_model, tokenizer, layout=pythia_layout(), compile=False)

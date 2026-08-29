@@ -17,7 +17,6 @@ TRIALS_PER_CELL = 6
 
 
 def target_tokens(tokenizer, family: str, target: dict) -> tuple[str, list[int]]:
-    """(display string, tracked single-token ids) for one trial target."""
     if family == "category":
         ids: list[int] = []
         for member in target["members"]:

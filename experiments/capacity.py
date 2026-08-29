@@ -18,10 +18,6 @@ MIN_LOAD = 20
 
 
 def build_canon(tokenizer, pools: list[dict], targets_per_family: dict) -> dict:
-    """Model-dependent canon per family: a pool word survives if its
-    leading-space form — the surface inside a comma-separated list — is a
-    single token; the canon is the first ``targets_per_family[name]``
-    survivors."""
     canon: dict[str, list[str]] = {}
     for pool in pools:
         name = pool["name"]
@@ -38,7 +34,6 @@ def build_canon(tokenizer, pools: list[dict], targets_per_family: dict) -> dict:
 
 
 def build_trial(rng, canon: dict, block_families: list[str]) -> tuple[list[str], list[str], list[int]]:
-    """One 80-word list: (words, family per word, block index per word)."""
     order = list(block_families)
     rng.shuffle(order)
     words: list[str] = []
@@ -55,14 +50,6 @@ def build_trial(rng, canon: dict, block_families: list[str]) -> tuple[list[str],
 
 
 def match_lures(tokenizer, canon: dict, words: list[str], families: list[str]) -> dict:
-    """One never-presented, frequency-matched control word per list word.
-
-    For each presented word the lure is the closest unused word of the *same*
-    family in BPE merge rank (token id), which under a byte-level BPE orders
-    roughly by corpus frequency. Assignment is greedy in a fixed order and
-    depends on nothing but the trial's word list, so it is fixed before any
-    rank is read. Returns ``{presented_word: lure_word}``.
-    """
     def leading_space_id(word: str) -> int | None:
         ids = tokenizer.encode(" " + word, add_special_tokens=False)
         return ids[0] if len(ids) == 1 else None
@@ -99,7 +86,6 @@ def match_lures(tokenizer, canon: dict, words: list[str], families: list[str]) -
 
 
 def list_text_and_comma_chars(words: list[str]) -> tuple[str, list[int]]:
-    """Comma-separated list with a trailing comma; char index of each comma."""
     text = ""
     comma_chars: list[int] = []
     for index, word in enumerate(words):
@@ -126,13 +112,6 @@ def comma_token_positions(offsets: list[tuple[int, int]], comma_chars: list[int]
 def retention_specificity(
     words_df: pd.DataFrame, lures_df: pd.DataFrame, min_load: int
 ) -> dict[str, dict]:
-    """Per-method retention specificity from the paired seen/lure ranks.
-
-    Each observation pairs an already-presented word with its matched lure at
-    the same comma of the same trial, scoring ``log2(rank_lure / rank_seen)``.
-    Commas before ``min_load`` are dropped so the score describes readability
-    under load.
-    """
     seen = words_df[words_df["read"] & (words_df["comma_index"] >= min_load)]
     keys = ["trial", "method", "comma_index"]
     paired = seen.merge(
@@ -305,8 +284,6 @@ def run_one(run: LensRun) -> tuple[dict, dict[str, pd.DataFrame]]:
             comma_profile.append(entry)
 
     def hit_counts(frame: pd.DataFrame, k: int, index: pd.MultiIndex) -> pd.Series:
-        """Qualifying words at rank <= k per (trial, comma), reindexed over
-        every comma so a comma with no qualifying rows counts as 0."""
         counts = (
             frame.assign(hit=frame["rank_bandmin"] <= k)
             .groupby(["trial", "comma_index"])["hit"]

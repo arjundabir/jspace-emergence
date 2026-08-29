@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-import warnings
 from pathlib import Path
 
 import torch
@@ -30,7 +28,6 @@ _probe_cache: dict[tuple[str, str], bool] = {}
 
 
 def resolve_model_source(model_id: str, revision: str | None) -> tuple[str, str | None]:
-    """Return ``(path_or_id, revision)`` that loads the revision's true weights."""
     if revision in CLEAN_REVISIONS:
         return model_id, revision
     if model_id not in BROKEN_REPOS and not _serves_stray_monolith(model_id, revision):
@@ -46,50 +43,16 @@ def resolve_model_source(model_id: str, revision: str | None) -> tuple[str, str 
         if entry.name == STRAY_FILE:
             continue
         link = safe / entry.name
-        if link.is_symlink() or link.exists():
-            link.unlink()
+        link.unlink(missing_ok=True)
         link.symlink_to(entry.resolve())
-    has_weights = (safe / "model.safetensors.index.json").exists() or any(
-        safe.glob("pytorch_model*.bin")
-    )
-    if not has_weights:
-        raise RuntimeError(
-            f"{model_id}@{revision}: neither sharded safetensors nor a "
-            f"pytorch_model.bin in the snapshot; refusing to fall back to "
-            f"the stray consolidated {STRAY_FILE}"
-        )
     return str(safe), None
 
 
 def _serves_stray_monolith(model_id: str, revision: str) -> bool:
-    """Probe whether the revision lists a consolidated file next to shards.
-
-    That combination is the signature of the bug: transformers will prefer
-    the consolidated file. A probe that cannot reach the Hub after retries
-    warns and reports False -- add the repo to ``BROKEN_REPOS`` to make the
-    safe path unconditional.
-    """
     key = (model_id, revision)
     if key in _probe_cache:
         return _probe_cache[key]
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            files = set(list_repo_files(model_id, revision=revision))
-            break
-        except Exception as error:  # the hub raises many types
-            last_error = error
-            time.sleep(2**attempt)
-    else:
-        warnings.warn(
-            f"could not inspect {model_id}@{revision} for the stray-weights "
-            f"pattern ({last_error!r}); loading through the default path. "
-            f"If this repo is affected, add it to BROKEN_REPOS in "
-            f"lens/load_models.py.",
-            stacklevel=3,
-        )
-        _probe_cache[key] = False
-        return False
+    files = set(list_repo_files(model_id, revision=revision))
     stray = (
         STRAY_FILE in files
         and "model.safetensors.index.json" in files
@@ -100,7 +63,6 @@ def _serves_stray_monolith(model_id: str, revision: str) -> bool:
 
 
 def load_model(model_id: str, revision: str | None, device: str | torch.device | None = None):
-    """Load ``model_id@revision`` as float32 in eval mode; returns ``(model, tokenizer)``."""
     resolved = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, use_fast=True)
     source, source_revision = resolve_model_source(model_id, revision)

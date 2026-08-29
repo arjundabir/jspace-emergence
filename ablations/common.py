@@ -18,19 +18,14 @@ from lens.load_models import CHECKPOINT_STEPS, REPO_ROOT, load_model
 DATA_ROOT = REPO_ROOT / "jacobian-lens" / "data" / "evaluations"
 RESULTS_ROOT = REPO_ROOT / "results" / "ablations"
 
-#: Workspace band as a fraction of depth, fixed across models and checkpoints
-#: so the emergence claim compares the same band at every step. Located on
-#: Pythia by the excess-kurtosis minimum of the fitted lens, which sits inside
-#: (0.35, 0.90) at the last three checkpoints of every sizeable model.
+# Workspace band as a fraction of depth, fixed across models and checkpoints
+# so the emergence claim compares the same band at every step. Located on
+# Pythia by the excess-kurtosis minimum of the fitted lens, which sits inside
+# (0.35, 0.90) at the last three checkpoints of every sizeable model.
 BAND_FRACTION = (0.35, 0.90)
 
 
 def band_layers(all_layers: list[int], n_layers: int) -> list[int]:
-    """Fitted layers inside the fractional workspace band.
-
-    Falls back to every fitted layer when the band selects none, which is
-    what happens on shallow models.
-    """
     last = max(n_layers - 1, 1)
     low, high = BAND_FRACTION
     inside = [layer for layer in all_layers if low <= layer / last <= high]
@@ -61,7 +56,6 @@ def one_based_rank(logits: torch.Tensor, token_id: int) -> int:
 
 
 def best_rank_logprob(tokenizer, logits: torch.Tensor, word: str):
-    """Best (rank, log-prob, surface) over single-token surfaces of ``word``."""
     log_probs = logits.float().log_softmax(dim=-1)
     best = (float("inf"), float("nan"), None)
     for surface in surface_forms(word):
@@ -72,19 +66,12 @@ def best_rank_logprob(tokenizer, logits: torch.Tensor, word: str):
         rank = one_based_rank(logits, tid)
         if rank < best[0]:
             best = (float(rank), float(log_probs[tid]), surface)
-    if best[2] is None:
-        raise ValueError(f"No single-token form for {word!r}")
     return best
 
 
 def teacher_forced_mean_logprob(
     logits: torch.Tensor, input_ids_list: list[int], target_positions: list[int]
 ) -> float:
-    """Length-normalized mean log-prob of the target tokens under teacher forcing.
-
-    For each target index ``pos``, score ``input_ids[pos]`` under
-    ``logits[pos - 1]``.
-    """
     total = 0.0
     for pos in target_positions:
         log_probs = logits[pos - 1].float().log_softmax(dim=-1)
@@ -93,7 +80,6 @@ def teacher_forced_mean_logprob(
 
 
 def lens_vector(lens, lens_model, layer: int, token_id: int, method: str) -> torch.Tensor:
-    """Normalized row ``token_id`` of ``W_U J_layer`` (CPU float32); J = I for logit."""
     unembed_row = lens_model._lm_head.weight[token_id].detach().float().cpu()
     if method == "logit":
         vector = unembed_row.clone()
@@ -124,11 +110,10 @@ def forward_with_hooks(hf_model, lens_model, input_ids, hooks: dict):
         lens_model.layers[layer].register_forward_hook(hook)
         for layer, hook in hooks.items()
     ]
-    try:
-        return hf_model(input_ids=input_ids).logits[0].float()
-    finally:
-        for handle in handles:
-            handle.remove()
+    logits = hf_model(input_ids=input_ids).logits[0].float()
+    for handle in handles:
+        handle.remove()
+    return logits
 
 
 def kl_divergence(clean_logits: torch.Tensor, other_logits: torch.Tensor) -> float:
@@ -139,8 +124,6 @@ def kl_divergence(clean_logits: torch.Tensor, other_logits: torch.Tensor) -> flo
 
 @dataclass(frozen=True)
 class Example:
-    """One prepared item: what to ablate, where to read out, what to score."""
-
     input_ids_list: list[int]
     readout_position: int
     ablate_positions: list[int]
@@ -153,8 +136,6 @@ class Example:
 
 @dataclass(frozen=True)
 class Task:
-    """What distinguishes one ablation from the other five."""
-
     name: str
     slug: str
     prepare_example: Callable[[dict, object], "Example | str"]  # str = skip reason
@@ -162,7 +143,6 @@ class Task:
 
 
 def prompt_final_prepare(item: dict, tokenizer) -> Example | str:
-    """Prompt only; readout = last prompt token; the concept scores itself."""
     concept = item["intermediates"][0]
     try:
         concept_id, _ = first_single_token_id(tokenizer, concept)
@@ -182,7 +162,6 @@ def prompt_final_prepare(item: dict, tokenizer) -> Example | str:
 
 
 def _boundary_encode(item: dict, tokenizer, target: str) -> tuple[list[int], int]:
-    """Encode ``prompt + target`` offset-aligned; return ids and the target's first token index."""
     encoded = tokenizer(
         item["prompt"] + target,
         return_tensors="pt",
@@ -197,7 +176,6 @@ def _boundary_encode(item: dict, tokenizer, target: str) -> tuple[list[int], int
 
 
 def target_boundary_prepare(item: dict, tokenizer) -> Example | str:
-    """Readout at the token before ``target``; both intermediate and target single-token."""
     target = item["target"]
     intermediate = item["intermediates"][0]
     try:
@@ -217,10 +195,6 @@ def target_boundary_prepare(item: dict, tokenizer) -> Example | str:
 
 
 def whole_answer_prepare(item: dict, tokenizer) -> Example | str:
-    """Readout before the target; the full target span is scored teacher-forced,
-    so a multi-token target stays usable as long as the intermediate is
-    single-token. Rank is additionally reported when the target is single-token.
-    """
     intermediate = item["intermediates"][0]
     target = item.get("target") or intermediate
     try:
@@ -257,13 +231,6 @@ PER_EXAMPLE_COLUMNS = [
 def run_ablation(
     task: Task, model_id: str, step: int, lens_path: Path, device: torch.device
 ) -> tuple[list[dict], list[dict]]:
-    """Run one checkpoint's ablation; returns ``(summary_rows, per_example_rows)``.
-
-    ``logprob_clean`` / ``logprob_ablated`` hold the natural-log probability of
-    the scored answer at the readout (for whole-answer tasks, the
-    length-normalized mean over the target span). All six ablations report
-    this same unit.
-    """
     revision = f"step{step}"
     lens = load_lens(lens_path)
     hf_model, tokenizer = load_model(model_id, revision, device)
@@ -380,14 +347,10 @@ def run_ablation(
 def run(task: Task) -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     for model_dir in sorted(FITS_ROOT.iterdir()):
-        if not model_dir.is_dir():
-            continue
         jobs = sorted(
             (int(re.search(r"_step(\d+)_jlens\.pt$", path.name).group(1)), path)
             for path in model_dir.glob("*_jlens.pt")
         )
-        if not jobs:
-            continue
         model_id = model_dir.name.replace("EleutherAI_", "EleutherAI/", 1)
 
         summary_rows: list[dict] = []

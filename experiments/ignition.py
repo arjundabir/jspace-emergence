@@ -33,9 +33,6 @@ def build_pairs(data: dict, rng: random.Random, n_country_pairs: int) -> dict:
 
 
 def build_distractor_pools(data: dict) -> dict[str, list[str]]:
-    """Candidate negative-control words per pair kind — the vocabulary that
-    kind's pairs are themselves drawn from, so a distractor is always the
-    same sort of word as the target it stands in for."""
     return {
         "country": list(data["countries_12"]),
         "alt": ["France"] + list(data["alt_words"]),
@@ -47,13 +44,6 @@ def build_distractor_pools(data: dict) -> dict[str, list[str]]:
 def matched_distractors(
     tokenizer, pool: Sequence[str], word_a: str, word_b: str, n_distractors: int
 ) -> list[tuple[str, int]]:
-    """``(word, token_id)`` for the pool words nearest the pair in merge rank.
-
-    Selection depends only on the pair and the tokenizer — never on a rank
-    that was read. Candidates must have a single-token leading-space form and
-    must not be in the mixture; the nearest token ids keep the control
-    approximately frequency-matched to the target.
-    """
     excluded = {word_a, word_b}
     candidates: list[tuple[str, int]] = []
     for word in dict.fromkeys(pool):  # de-duplicate, keep dataset order
@@ -77,13 +67,6 @@ def matched_distractors(
 
 
 def crossing_alpha(alphas: np.ndarray, shares: np.ndarray, level: float) -> float:
-    """First upward crossing of ``level`` on the share's monotone envelope.
-
-    NaN when the curve starts at/above the level or never reaches it: no
-    crossing is observed inside the sweep. Returning 0 for a curve that is
-    high everywhere would fabricate a maximally sharp "transition" in exactly
-    the no-transition regime the scrambled controls expose.
-    """
     envelope = np.maximum.accumulate(shares)
     if envelope[0] >= level:
         return float("nan")
@@ -103,12 +86,6 @@ def tidy_target_ranks(
     distractors_by_pair: dict[tuple[str, str], list[str]],
     majority_margin: float,
 ) -> pd.DataFrame:
-    """Long form of the band-min ranks: one row per scored word per trial.
-
-    ``role`` is ``"a"``/``"b"`` for the mixture members and ``"distractor"``
-    for the matched controls; ``majority`` names which member the mixture
-    favours (``"none"`` inside ``majority_margin`` of an even mix).
-    """
     if wide.empty:
         return wide
     keys = ["method", "kind", "pair", "carrier_index", "alpha"]
@@ -141,7 +118,6 @@ def tidy_target_ranks(
 
 
 def specificity_rows(targets: pd.DataFrame) -> list[dict]:
-    """Per (method, kind) target-specificity summary from the long ranks."""
     if targets.empty:
         return []
     scored = targets[targets["majority"] != "none"]

@@ -14,12 +14,6 @@ PREFILL_KEYS = ["default"]
 
 
 def conversation_text(turns: list[dict]) -> tuple[str, tuple[int, int]]:
-    """Base-model rendering of the multi-turn prompt.
-
-    Returns the text (ending in the empty assistant turn's ``Assistant:``)
-    and the char span of the *last user turn's* content — the question turn
-    the injection targets.
-    """
     parts: list[str] = []
     question_span = (0, 0)
     cursor = 0
@@ -37,9 +31,6 @@ def conversation_text(turns: list[dict]) -> tuple[str, tuple[int, int]]:
 
 
 def make_inject_hook(vector: torch.Tensor, positions: list[int], scale: float):
-    """h <- h + scale * vector at ``positions`` (vector is unit-norm; scale
-    carries the layer's mean residual norm times the strength scalar)."""
-
     def hook(module, inputs, output):
         hidden = output if torch.is_tensor(output) else output[0]
         hidden = hidden.clone()

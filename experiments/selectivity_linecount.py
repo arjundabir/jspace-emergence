@@ -15,8 +15,6 @@ CONDITIONS = PREFILL_CONDITIONS + ["continue"]
 
 
 def any_number_ids(tokenizer) -> list[int]:
-    """Single-token forms of every two-digit numeral and English number word
-    10-99 — the dataset's generic number-token target set."""
     ids: list[int] = []
     for value in range(10, 100):
         for surface in (str(value), common.number_word(value)):
@@ -25,7 +23,6 @@ def any_number_ids(tokenizer) -> list[int]:
 
 
 def build_prompt(condition: str, data: dict, wrapped: str) -> tuple[str, str]:
-    """(prompt prefix ending at ``Assistant:``, teacher-forced prefill)."""
     if condition == "continue":
         question = data["explicit_q"]
         prefill = ""

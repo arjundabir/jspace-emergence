@@ -12,7 +12,6 @@ ALPHAS = [1.0, 2.0]
 
 
 def build_prompt(stimulus: str, question: str) -> tuple[str, int, int]:
-    """Prompt text plus the char span of the stimulus inside it."""
     head = f"Human: {question}\n\nHere is the passage:\n\n"
     prompt = f"{head}{stimulus}\n\nAssistant:"
     return prompt, len(head), len(head) + len(stimulus)

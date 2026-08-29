@@ -11,11 +11,6 @@ ALPHAS = [1.0, 2.0]
 
 
 def answer_token_ids(tokenizer, answer: str) -> tuple[list[int], bool]:
-    """Single-token ids of ``answer`` (bare + leading-space forms).
-
-    Falls back to the first token of the leading-space tokenization when no
-    form is a single token, flagged so those items can be filtered.
-    """
     forms = common.single_token_forms(tokenizer, answer)
     if forms:
         return sorted(set(forms.values())), True

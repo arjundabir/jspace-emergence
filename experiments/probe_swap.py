@@ -12,23 +12,15 @@ ALPHAS = [1.0, 2.0]
 
 
 def completion_boundary(tokenizer, prompt: str, completion: str) -> tuple[list[int], int]:
-    """``(prefix_ids, first_completion_token)`` at the prompt/answer junction.
-
-    The two sides are joined with a single space unless the prompt already
-    ends in whitespace, then tokenized once and offset-aligned: the answer
-    token is the first token whose char span extends past the prompt
-    boundary — its leading-space form, exactly the token the model predicts
-    next in context — and the prefix is everything before it.
-    """
     separator = "" if prompt.endswith((" ", "\n")) or completion.startswith(" ") else " "
     input_ids, offsets = common.encode_with_offsets(
         tokenizer, prompt + separator + completion
     )
     boundary = len(prompt)
-    for index, (start, end) in enumerate(offsets):
-        if end > boundary and end > start:
-            return input_ids[:index], input_ids[index]
-    raise ValueError(f"No completion token found for {completion!r}.")
+    index = next(
+        i for i, (start, end) in enumerate(offsets) if end > boundary and end > start
+    )
+    return input_ids[:index], input_ids[index]
 
 
 @torch.no_grad()

@@ -27,7 +27,6 @@ def concept_task_ids(tokenizer, pair: dict) -> list[int]:
 
 
 def instruction_for(condition: str, pair: dict, partner: dict | None) -> str:
-    """The covert-task instruction sentence for one trial."""
     if condition in ("concept", "a_only"):
         return f"Concentrate on {pair['concept']} while you write the sentence."
     if condition == "b_only":
@@ -54,14 +53,12 @@ def instruction_for(condition: str, pair: dict, partner: dict | None) -> str:
             f"Concentrate on {partner['concept']} and {pair['concept']} "
             "while you write the sentence."
         )
-    raise ValueError(f"Unknown condition {condition!r}")
 
 
 @torch.no_grad()
 def best_ranks_for_tasks(
     run: LensRun, prefix: str, response: str, task_ids: dict[str, list[int]]
 ) -> dict[str, dict[str, float]]:
-    """``{method: {task: best rank over (band layer, response position)}}``."""
     input_ids, positions = common.teacher_forced_span(run.tokenizer, prefix, response)
     residuals = common.capture_band_residuals(run, input_ids, positions)
     best: dict[str, dict[str, float]] = {

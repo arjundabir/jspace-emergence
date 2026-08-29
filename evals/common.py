@@ -44,8 +44,6 @@ LOG_K_VALUES = np.log(K_VALUES.astype(np.float64))
 
 @dataclass(frozen=True)
 class Task:
-    """What distinguishes one evaluation from the other five."""
-
     name: str
     slug: str
     readout_mode: str
@@ -76,16 +74,11 @@ def json_default(value):
 
 
 def discover_lenses(lens_root: Path) -> list[Path]:
-    """Every fitted lens under ``lens_root``, sorted by path."""
-    if not lens_root.is_dir():
-        raise FileNotFoundError(f"Lens root does not exist: {lens_root}")
     return sorted(path.resolve() for path in lens_root.rglob("*_jlens.pt") if path.is_file())
 
 
 def identity_from_lens_filename(path: Path) -> tuple[str, str, int]:
     match = re.fullmatch(r"(?P<model_part>.+)_(?P<revision>step(?P<step>\d+))_jlens\.pt", path.name)
-    if match is None:
-        raise ValueError(f"Lens filename must end in _step<number>_jlens.pt; got {path.name!r}.")
     model_id = match.group("model_part").replace("EleutherAI_", "EleutherAI/", 1)
     return model_id, match.group("revision"), int(match.group("step"))
 
@@ -111,11 +104,6 @@ def one_based_rank(logits: torch.Tensor, token_id: int) -> int:
 
 
 def surface_forms(task: Task, intermediate: str) -> list[str]:
-    """Surface strings scored for one intermediate.
-
-    A byte-level BPE represents "Brazil" and " Brazil" as different tokens;
-    they are the same word, so both are scored and the minimum rank is taken.
-    """
     forms: list[str] = []
     for synonym in task.expand_synonyms(intermediate):
         forms += [synonym, " " + synonym]
@@ -123,15 +111,6 @@ def surface_forms(task: Task, intermediate: str) -> list[str]:
 
 
 def unembed_stable(lens_model, residual: torch.Tensor) -> torch.Tensor:
-    """Final norm + unembedding, with the normalization done in float32.
-
-    This is the readout path behind every reported number. The explicit fp32
-    norm keeps the transported residual ``J_l @ h`` safe even against a
-    half-precision head: that product sums over d_model and can exceed fp16's
-    65504 ceiling, and inf -> LayerNorm -> NaN logits would turn every rank
-    into a silent 1. Post-norm values are O(1), so handing them to the head's
-    dtype afterwards is safe; W_U is never upcast.
-    """
     head = lens_model._lm_head
     norm = lens_model._final_norm
     x = residual.to(device=head.weight.device, dtype=torch.float32)
@@ -160,7 +139,6 @@ def encode_with_offsets(tokenizer, text: str) -> tuple[list[int], list[tuple[int
 
 
 def prompt_final_prepare(item_index: int, item: dict, tokenizer) -> dict:
-    """Readout at the final prompt token; no answer target."""
     input_ids, _ = encode_with_offsets(tokenizer, item["prompt"])
     readout_position = len(input_ids) - 1
     return {
@@ -176,12 +154,6 @@ def prompt_final_prepare(item_index: int, item: dict, tokenizer) -> dict:
 
 
 def target_boundary_prepare(item_index: int, item: dict, tokenizer) -> dict:
-    """Readout at the token immediately preceding ``target``.
-
-    The prompt and target are concatenated and offset-aligned rather than
-    tokenized apart, so a trailing space in the prompt merges into the
-    target's leading-space token instead of becoming a lone " " token.
-    """
     target = item["target"]
     evaluation_text = item["prompt"] + target
     input_ids, offsets = encode_with_offsets(tokenizer, evaluation_text)
@@ -201,7 +173,6 @@ def target_boundary_prepare(item_index: int, item: dict, tokenizer) -> dict:
 
 
 def build_tokenization(task: Task, tokenizer, items: list[dict]) -> tuple[dict, pd.DataFrame]:
-    """Token ids for every surface form; single-token forms enter the paper metric."""
     unique = sorted({key for item in items for key in item["intermediates"]})
     forms_by_key: dict[str, list[dict]] = {}
     rows = []
@@ -254,11 +225,8 @@ def compute_metrics(
     for method in METHODS:
         for layer_set_name, layers in layer_sets.items():
             candidate = eligible[(eligible["method"] == method) & (eligible["layer"].isin(layers))]
-            if len(candidate):
-                best_idx = candidate.groupby(["item_index", "intermediate"], sort=False)["rank"].idxmin()
-                best = candidate.loc[best_idx, ["item_index", "intermediate", "rank"]]
-            else:
-                best = pd.DataFrame(columns=["item_index", "intermediate", "rank"])
+            best_idx = candidate.groupby(["item_index", "intermediate"], sort=False)["rank"].idxmin()
+            best = candidate.loc[best_idx, ["item_index", "intermediate", "rank"]]
             merged = base.merge(best, on=["item_index", "intermediate"], how="left")
 
             per_item = []
@@ -304,15 +272,12 @@ def compute_metrics(
                 **{f"pass_at_{int(k)}": float(v) for k, v in zip(K_VALUES, macro_curve)},
             })
 
-    item_metrics = pd.concat(item_rows, ignore_index=True) if item_rows else pd.DataFrame()
+    item_metrics = pd.concat(item_rows, ignore_index=True)
     return item_metrics, pd.DataFrame(summary_rows)
 
 
 def compute_layer_profile(target_scores: pd.DataFrame, n_layers: int) -> pd.DataFrame:
-    """Per-layer recovery on depth reindexed to [0, 100], as the paper reports."""
     eligible = target_scores[target_scores["included_in_paper_metric"]]
-    if not len(eligible):
-        return pd.DataFrame()
     best = eligible.groupby(
         ["method", "layer", "item_index", "intermediate"], as_index=False
     )["rank"].min()
@@ -340,7 +305,6 @@ def compute_layer_profile(target_scores: pd.DataFrame, n_layers: int) -> pd.Data
 def best_rank_and_logprob(
     task: Task, forms_by_key: dict, tokenizer, logits: torch.Tensor, word: str
 ) -> tuple[float, float]:
-    """Best (rank, logprob) over the single-token surfaces of ``word``."""
     if not word:
         return float("nan"), float("nan")
     if word in forms_by_key:
@@ -532,14 +496,11 @@ def evaluate_lens(
 
 def output_path_for_lens(lens_path: Path, output_dir: Path, eval_name: str, suffix: str = ".json") -> Path:
     match = re.fullmatch(r"(?P<model_part>.+)_(?P<revision>step\d+)_jlens\.pt", lens_path.name)
-    if match is None:
-        raise ValueError(f"Lens filename must end in _step<number>_jlens.pt; got {lens_path.name!r}.")
     stem = lens_path.name.replace("_jlens.pt", f"_{eval_name}{suffix}")
     return output_dir / match.group("model_part") / match.group("revision") / stem
 
 
-def rebuild_summary(output_dir: Path, eval_name: str) -> Path | None:
-    """Rebuild emergence_summary_<eval>.csv by scanning nested result JSONs."""
+def rebuild_summary(output_dir: Path, eval_name: str) -> Path:
     rows: list[dict] = []
     for path in sorted(output_dir.resolve().rglob(f"*_{eval_name}.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -563,9 +524,6 @@ def rebuild_summary(output_dir: Path, eval_name: str) -> Path | None:
                 "dtype": payload["dtype"],
                 "device": payload["device"],
             })
-    if not rows:
-        print(f"No {eval_name} results found under {output_dir}")
-        return None
     frame = pd.DataFrame(rows).sort_values(
         ["method", "layer_set", "parameter_count", "checkpoint_step"], na_position="last"
     )
