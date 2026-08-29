@@ -126,3 +126,60 @@ def _serves_stray_monolith(model_id: str, revision: str) -> bool:
     )
     _probe_cache[key] = stray
     return stray
+
+
+def load_model(model_id: str, revision: str | None, device: str | torch.device | None = None):
+    """Load ``model_id@revision`` as float32 in eval mode; returns ``(model, tokenizer)``."""
+    resolved = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, use_fast=True)
+    source, source_revision = resolve_model_source(model_id, revision)
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        source, revision=source_revision, dtype=torch.float32
+    )
+    return hf_model.to(resolved).eval(), tokenizer
+
+
+PREFETCH_PATTERNS = [
+    "config.json", "generation_config.json", "tokenizer*", "special_tokens*",
+    "*.safetensors*", "pytorch_model*",
+]
+
+
+def prefetch(model_id: str, revision: str) -> None:
+    """Ensure the revision's weights are local without loading them."""
+    source, source_revision = resolve_model_source(model_id, revision)
+    if source_revision is not None:  # still a hub reference, not a resolved local dir
+        snapshot_download(source, revision=source_revision, allow_patterns=PREFETCH_PATTERNS)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Prefetch Pythia checkpoints into the Hugging Face cache"
+    )
+    parser.add_argument("--models", default=",".join(MODELS))
+    parser.add_argument("--steps", default=",".join(str(s) for s in CHECKPOINT_STEPS))
+    args = parser.parse_args()
+
+    sizes = [s.strip() for s in args.models.split(",")]
+    unknown = [s for s in sizes if s not in MODELS]
+    if unknown:
+        parser.error(f"unknown model(s) {unknown}; choose from {MODELS}")
+    steps = [int(s) for s in args.steps.split(",")]
+
+    failed: list[str] = []
+    for size in sizes:
+        for step in steps:
+            revision = f"step{step}"
+            try:
+                prefetch(model_id_for(size), revision)
+                print(f"  {size} {revision} ready", flush=True)
+            except Exception as error:  # one bad step must not abort the sweep
+                failed.append(f"{size}@{revision}")
+                print(f"  {size} {revision} FAILED: {error}", file=sys.stderr, flush=True)
+    if failed:
+        print(f"{len(failed)} failed: {', '.join(failed)}", file=sys.stderr)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
