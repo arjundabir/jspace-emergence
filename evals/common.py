@@ -381,3 +381,279 @@ def best_rank_and_logprob(
         if rank < best_rank:
             best_rank, best_logprob = float(rank), float(log_probs[token_id])
     return best_rank, best_logprob
+
+
+@torch.no_grad()
+def evaluate_lens(
+    task: Task,
+    lens_path: Path,
+    items: list[dict],
+    dataset_sha256: str,
+    device: torch.device,
+) -> tuple[dict, pd.DataFrame]:
+    model_id, revision, checkpoint_step = identity_from_lens_filename(lens_path)
+    lens_sha256 = sha256_file(lens_path)
+    lens = load_lens(lens_path)
+    hf_model, tokenizer = load_model(model_id, revision, device)
+    lens_model = jlens.from_hf(hf_model, tokenizer, layout=pythia_layout(), compile=False)
+
+    all_layers = list(lens.source_layers)
+    layer_sets = {"all_fitted": all_layers, "paper_25": paper_layers(all_layers)}
+    forms_by_key, tokenization_coverage = build_tokenization(task, tokenizer, items)
+    audits = [task.prepare_item(i, item, tokenizer) for i, item in enumerate(items)]
+
+    # One forward per item; keep the readout-position residual at every fitted
+    # layer, plus the final-layer residual at the answer position (the model's
+    # own next-token distribution, i.e. the capability control).
+    residual_lists = {layer: [] for layer in all_layers}
+    answer_residuals = []
+    final_layer = lens_model.n_layers - 1
+    record_layers = sorted(set(all_layers) | {final_layer})
+    for audit in audits:
+        input_ids = torch.tensor(
+            [audit["input_ids"]], dtype=torch.long, device=lens_model.input_device
+        )
+        with ActivationRecorder(lens_model.layers, at=record_layers) as recorder:
+            lens_model.forward(input_ids)
+        position = audit["readout_position"]
+        for layer in all_layers:
+            residual_lists[layer].append(
+                recorder.activations[layer][0, position].detach().to(device="cpu", dtype=torch.float32)
+            )
+        answer_residuals.append(
+            recorder.activations[final_layer][0, audit["answer_position"]]
+            .detach().to(device="cpu", dtype=torch.float32)
+        )
+        del recorder, input_ids
+
+    readout_residuals = {layer: torch.stack(values) for layer, values in residual_lists.items()}
+
+    score_rows = []
+    for method in METHODS:
+        use_jacobian = method == "jacobian"
+        for layer in all_layers:
+            jacobian = lens.jacobians[layer].to(device, dtype=torch.float32) if use_jacobian else None
+            for batch_start in range(0, len(items), SCORE_BATCH_SIZE):
+                batch_end = min(batch_start + SCORE_BATCH_SIZE, len(items))
+                residual = readout_residuals[layer][batch_start:batch_end].to(device, dtype=torch.float32)
+                if use_jacobian:
+                    residual = residual @ jacobian.T
+                logits = unembed_stable(lens_model, residual).cpu()
+                log_z = torch.logsumexp(logits, dim=-1)
+                for local_index in range(batch_end - batch_start):
+                    item_index = batch_start + local_index
+                    item_logits = logits[local_index]
+                    item_log_z = float(log_z[local_index])
+                    for key in items[item_index]["intermediates"]:
+                        for form in forms_by_key[key]:
+                            if not form["token_ids"]:
+                                continue
+                            token_id = form["token_ids"][0]
+                            logit = float(item_logits[token_id])
+                            score_rows.append({
+                                "item_index": item_index,
+                                "name": items[item_index]["name"],
+                                "method": method,
+                                "layer": layer,
+                                "intermediate": key,
+                                "surface": form["surface"],
+                                "included_in_paper_metric": form["included_in_paper_metric"],
+                                "rank": one_based_rank(item_logits, token_id),
+                                "logit": logit,
+                                "logprob": logit - item_log_z,
+                            })
+            if use_jacobian:
+                del jacobian
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
+    target_scores = pd.DataFrame(score_rows)
+    item_metrics, run_summary = compute_metrics(items, target_scores, layer_sets)
+    layer_profile = compute_layer_profile(target_scores, lens_model.n_layers)
+
+    # Capability control: can this checkpoint produce the task's answer at all?
+    control_rows = []
+    for batch_start in range(0, len(items), SCORE_BATCH_SIZE):
+        batch_end = min(batch_start + SCORE_BATCH_SIZE, len(items))
+        residual = torch.stack(answer_residuals[batch_start:batch_end]).to(device, dtype=torch.float32)
+        logits = unembed_stable(lens_model, residual).cpu()
+        for local_index in range(batch_end - batch_start):
+            item_index = batch_start + local_index
+            item_logits = logits[local_index]
+            audit = audits[item_index]
+            rank, logprob = best_rank_and_logprob(
+                task, forms_by_key, tokenizer, item_logits, audit["answer_word"] or ""
+            )
+            control_rows.append({
+                "item_index": item_index,
+                "name": items[item_index]["name"],
+                "readout_position": audit["readout_position"],
+                "readout_token": tokenizer.decode([audit["input_ids"][audit["readout_position"]]]),
+                "answer_position": audit["answer_position"],
+                "answer_word": audit["answer_word"] or "",
+                "model_top1": tokenizer.decode([int(item_logits.argmax())]),
+                "answer_rank": rank,
+                "answer_logprob": logprob,
+                "answer_is_top1": bool(rank == 1),
+            })
+    capability_control = pd.DataFrame(control_rows)
+    # Capability averages run over scorable items only: a NaN rank means the
+    # item had no target or no single-token surface -- "we could not ask",
+    # not "the model got it wrong".
+    scorable = capability_control[capability_control["answer_rank"].notna()]
+    finite_rank = scorable["answer_rank"]
+
+    n_lens_fit_prompts = int(lens.n_prompts)
+    del hf_model, lens_model, lens
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    payload = {
+        "evaluation": task.name,
+        "evaluation_slug": task.slug,
+        "readout_mode": task.readout_mode,
+        "lens_filename": lens_path.name,
+        "lens_sha256": lens_sha256,
+        "model_id": model_id,
+        "revision": revision,
+        "checkpoint_step": checkpoint_step,
+        "parameter_count": PARAM_COUNTS.get(model_id),
+        "dtype": "float32",
+        "device": str(device),
+        "tokens_seen": checkpoint_step * TOKENS_PER_STEP,
+        "dataset_sha256": dataset_sha256,
+        "n_items": len(items),
+        "n_unique_intermediates": len(tokenization_coverage),
+        "n_scorable_intermediates": int(tokenization_coverage["scorable"].sum()),
+        "tokenization_coverage": float(tokenization_coverage["scorable"].mean()),
+        "fitted_layers": all_layers,
+        "paper_25_layers": layer_sets["paper_25"],
+        "n_model_layers": int(len(all_layers) + 1),
+        "methods": METHODS,
+        "paper_k_values": K_VALUES.tolist(),
+        "n_lens_fit_prompts": n_lens_fit_prompts,
+        "n_capability_scorable": int(len(scorable)),
+        "capability_answer_top1_rate": (
+            float(scorable["answer_is_top1"].mean()) if len(scorable) else None
+        ),
+        "capability_answer_median_rank": (
+            float(finite_rank.median()) if len(finite_rank) else None
+        ),
+        "run_summary": run_summary.to_dict(orient="records"),
+        "item_metrics": item_metrics.to_dict(orient="records"),
+        "layer_profile": layer_profile.to_dict(orient="records"),
+        "capability_control": capability_control.to_dict(orient="records"),
+        "tokenization_coverage_by_intermediate": tokenization_coverage.to_dict(orient="records"),
+    }
+    return payload, target_scores
+
+
+def output_path_for_lens(lens_path: Path, output_dir: Path, eval_name: str, suffix: str = ".json") -> Path:
+    match = re.fullmatch(r"(?P<model_part>.+)_(?P<revision>step\d+)_jlens\.pt", lens_path.name)
+    if match is None:
+        raise ValueError(f"Lens filename must end in _step<number>_jlens.pt; got {lens_path.name!r}.")
+    stem = lens_path.name.replace("_jlens.pt", f"_{eval_name}{suffix}")
+    return output_dir / match.group("model_part") / match.group("revision") / stem
+
+
+def rebuild_summary(output_dir: Path, eval_name: str) -> Path | None:
+    """Rebuild emergence_summary_<eval>.csv by scanning nested result JSONs."""
+    rows: list[dict] = []
+    for path in sorted(output_dir.resolve().rglob(f"*_{eval_name}.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for row in payload["run_summary"]:
+            rows.append({
+                "evaluation": payload["evaluation"],
+                "lens_filename": payload["lens_filename"],
+                **row,
+                "model_id": payload["model_id"],
+                "revision": payload["revision"],
+                "checkpoint_step": payload["checkpoint_step"],
+                "parameter_count": payload["parameter_count"],
+                "tokens_seen": payload["tokens_seen"],
+                "capability_answer_top1_rate": payload["capability_answer_top1_rate"],
+                "capability_answer_median_rank": payload["capability_answer_median_rank"],
+                "n_capability_scorable": payload["n_capability_scorable"],
+                "n_scorable_intermediates": payload["n_scorable_intermediates"],
+                "tokenization_coverage": payload["tokenization_coverage"],
+                "lens_sha256": payload["lens_sha256"],
+                "n_lens_fit_prompts": payload["n_lens_fit_prompts"],
+                "dtype": payload["dtype"],
+                "device": payload["device"],
+            })
+    if not rows:
+        print(f"No {eval_name} results found under {output_dir}")
+        return None
+    frame = pd.DataFrame(rows).sort_values(
+        ["method", "layer_set", "parameter_count", "checkpoint_step"], na_position="last"
+    )
+    summary_path = output_dir / f"emergence_summary_{eval_name}.csv"
+    frame.to_csv(summary_path, index=False)
+    print(f"{len(frame)} summary rows -> {summary_path}")
+    return summary_path
+
+
+def run(task: Task) -> int:
+    parser = argparse.ArgumentParser(
+        description=f"{task.name} J-lens evaluation over every fitted lens in fits/"
+    )
+    parser.add_argument("--force", action="store_true",
+                        help="Re-run even if the output JSON already exists")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Evaluate at most this many lenses (sorted by path)")
+    parser.add_argument("--lens", type=Path, default=None,
+                        help="Evaluate only this *_jlens.pt file")
+    parser.add_argument("--device", default=None,
+                        help="torch device (default: cuda if available else cpu)")
+    args = parser.parse_args()
+
+    random.seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
+    torch.manual_seed(RANDOM_SEED)
+    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+    eval_path, items, dataset_sha256 = load_eval_items(task)
+    if args.lens is not None:
+        lenses = [args.lens.expanduser().resolve()]
+    else:
+        lenses = discover_lenses(FITS_ROOT)
+        if args.limit is not None:
+            lenses = lenses[: args.limit]
+
+    RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+    print(f"Evaluation: {task.name} ({len(items)} items from {eval_path.name})")
+    print(f"Lenses: {len(lenses)}; output: {RESULTS_ROOT} (<model>/<step>/*_{task.name}.json)")
+
+    for index, lens_path in enumerate(lenses, start=1):
+        out_path = output_path_for_lens(lens_path, RESULTS_ROOT, task.name)
+        if out_path.is_file() and not args.force:
+            print(f"[{index}/{len(lenses)}] skip (exists): {out_path.name}")
+            continue
+        print(f"[{index}/{len(lenses)}] {lens_path.name}")
+        started = time.perf_counter()
+        payload, target_scores = evaluate_lens(task, lens_path, items, dataset_sha256, device)
+        payload["elapsed_seconds"] = round(time.perf_counter() - started, 2)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        scores_path = output_path_for_lens(
+            lens_path, RESULTS_ROOT, task.name, suffix="_layer_scores.csv.gz"
+        )
+        target_scores.to_csv(scores_path, index=False, compression="gzip")
+        payload["layer_scores_file"] = scores_path.name
+        out_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, default=json_default),
+            encoding="utf-8",
+        )
+        headline = next(
+            row for row in payload["run_summary"]
+            if row["method"] == "jacobian" and row["layer_set"] == "all_fitted"
+        )
+        print(
+            f"  -> {out_path.name} ({payload['elapsed_seconds']}s)"
+            f" AUC={headline['normalized_log_auc_k1_100']:.4f}"
+            f" pass@1={headline['pass_at_1']:.3f}"
+            f" pass@10={headline['pass_at_10']:.3f}"
+        )
+
+    rebuild_summary(RESULTS_ROOT, task.name)
+    return 0
