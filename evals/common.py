@@ -216,3 +216,168 @@ def target_boundary_prepare(item_index: int, item: dict, tokenizer) -> dict:
         "exclude_last_from_ablation": False,
         "intermediates": item["intermediates"],
     }
+
+
+def build_tokenization(task: Task, tokenizer, items: list[dict]) -> tuple[dict, pd.DataFrame]:
+    """Token ids for every surface form; single-token forms enter the paper metric."""
+    unique = sorted({key for item in items for key in item["intermediates"]})
+    forms_by_key: dict[str, list[dict]] = {}
+    rows = []
+    for key in unique:
+        forms_by_key[key] = []
+        for surface in surface_forms(task, key):
+            token_ids = tokenizer.encode(surface, add_special_tokens=False)
+            row = {
+                "intermediate": key,
+                "surface": surface,
+                "token_ids": token_ids,
+                "n_tokens": len(token_ids),
+                "included_in_paper_metric": len(token_ids) == 1,
+            }
+            forms_by_key[key].append(row)
+            rows.append(row)
+    coverage = []
+    for key, forms in forms_by_key.items():
+        single = [f for f in forms if f["included_in_paper_metric"]]
+        coverage.append({
+            "intermediate": key,
+            "scorable": bool(single),
+            "n_single_token_forms": len(single),
+            "single_token_surfaces": ", ".join(f["surface"] for f in single),
+        })
+    return forms_by_key, pd.DataFrame(coverage)
+
+
+def paper_layers(all_layers: list[int]) -> list[int]:
+    if len(all_layers) <= PAPER_LAYER_COUNT:
+        return list(all_layers)
+    indices = np.rint(np.linspace(0, len(all_layers) - 1, PAPER_LAYER_COUNT)).astype(int)
+    return [all_layers[i] for i in indices]
+
+
+def compute_metrics(
+    items: list[dict],
+    target_scores: pd.DataFrame,
+    layer_sets: dict[str, list[int]],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    eligible = target_scores[target_scores["included_in_paper_metric"]].copy()
+    base = pd.DataFrame([
+        {"item_index": idx, "name": item["name"], "intermediate": key}
+        for idx, item in enumerate(items)
+        for key in item["intermediates"]
+    ])
+
+    item_rows = []
+    summary_rows = []
+    for method in METHODS:
+        for layer_set_name, layers in layer_sets.items():
+            candidate = eligible[(eligible["method"] == method) & (eligible["layer"].isin(layers))]
+            if len(candidate):
+                best_idx = candidate.groupby(["item_index", "intermediate"], sort=False)["rank"].idxmin()
+                best = candidate.loc[best_idx, ["item_index", "intermediate", "rank"]]
+            else:
+                best = pd.DataFrame(columns=["item_index", "intermediate", "rank"])
+            merged = base.merge(best, on=["item_index", "intermediate"], how="left")
+
+            per_item = []
+            for (item_index, name), group in merged.groupby(["item_index", "name"], sort=False):
+                ranks = group["rank"].to_numpy(dtype=float)
+                scorable = ranks[np.isfinite(ranks)]
+                curve = (
+                    (scorable[:, None] <= K_VALUES[None, :]).mean(axis=0)
+                    if len(scorable)
+                    else np.full(len(K_VALUES), np.nan)
+                )
+                per_item.append({
+                    "method": method,
+                    "layer_set": layer_set_name,
+                    "item_index": int(item_index),
+                    "name": name,
+                    "n_intermediates": len(ranks),
+                    "n_scorable": len(scorable),
+                    "min_rank_best": float(scorable.min()) if len(scorable) else float("nan"),
+                    "mrr": float(np.mean(1.0 / scorable)) if len(scorable) else float("nan"),
+                    "eligible_auc": (
+                        normalized_log_auc(curve) if np.isfinite(curve).all() else float("nan")
+                    ),
+                    **{f"pass_at_{int(k)}": float(v) for k, v in zip(K_VALUES, curve)},
+                })
+            item_df = pd.DataFrame(per_item)
+            item_rows.append(item_df)
+
+            scored = item_df[item_df["n_scorable"] > 0]
+            auc_mean, auc_stderr = mean_stderr(scored["eligible_auc"])
+            macro_curve = np.nanmean(
+                scored[[f"pass_at_{int(k)}" for k in K_VALUES]].to_numpy(dtype=float), axis=0
+            )
+            summary_rows.append({
+                "method": method,
+                "layer_set": layer_set_name,
+                "n_items": len(item_df),
+                "n_items_scored": len(scored),
+                "normalized_log_auc_k1_100": normalized_log_auc(macro_curve),
+                "auc_item_standard_error": auc_stderr,
+                "auc_item_mean": auc_mean,
+                "mean_reciprocal_rank": float(scored["mrr"].mean()),
+                **{f"pass_at_{int(k)}": float(v) for k, v in zip(K_VALUES, macro_curve)},
+            })
+
+    item_metrics = pd.concat(item_rows, ignore_index=True) if item_rows else pd.DataFrame()
+    return item_metrics, pd.DataFrame(summary_rows)
+
+
+def compute_layer_profile(target_scores: pd.DataFrame, n_layers: int) -> pd.DataFrame:
+    """Per-layer recovery on depth reindexed to [0, 100], as the paper reports."""
+    eligible = target_scores[target_scores["included_in_paper_metric"]]
+    if not len(eligible):
+        return pd.DataFrame()
+    best = eligible.groupby(
+        ["method", "layer", "item_index", "intermediate"], as_index=False
+    )["rank"].min()
+    best["layer_pct"] = 100.0 * best["layer"] / max(n_layers - 1, 1)
+    return (
+        best.assign(
+            hit_at_1=lambda d: (d["rank"] <= 1).astype(float),
+            hit_at_10=lambda d: (d["rank"] <= 10).astype(float),
+            hit_at_100=lambda d: (d["rank"] <= 100).astype(float),
+            reciprocal_rank=lambda d: 1.0 / d["rank"],
+            log10_rank=lambda d: np.log10(d["rank"]),
+        )
+        .groupby(["method", "layer", "layer_pct"], as_index=False)
+        .agg(
+            pass_at_1=("hit_at_1", "mean"),
+            pass_at_10=("hit_at_10", "mean"),
+            pass_at_100=("hit_at_100", "mean"),
+            mean_reciprocal_rank=("reciprocal_rank", "mean"),
+            median_log10_rank=("log10_rank", "median"),
+            n_scored=("rank", "size"),
+        )
+    )
+
+
+def best_rank_and_logprob(
+    task: Task, forms_by_key: dict, tokenizer, logits: torch.Tensor, word: str
+) -> tuple[float, float]:
+    """Best (rank, logprob) over the single-token surfaces of ``word``."""
+    if not word:
+        return float("nan"), float("nan")
+    if word in forms_by_key:
+        token_ids = [
+            form["token_ids"][0] for form in forms_by_key[word]
+            if form["included_in_paper_metric"]
+        ]
+    else:
+        token_ids = []
+        for surface in surface_forms(task, word):
+            ids = tokenizer.encode(surface, add_special_tokens=False)
+            if len(ids) == 1:
+                token_ids.append(ids[0])
+    if not token_ids:
+        return float("nan"), float("nan")
+    log_probs = logits.log_softmax(dim=-1)
+    best_rank, best_logprob = float("inf"), float("nan")
+    for token_id in token_ids:
+        rank = one_based_rank(logits, token_id)
+        if rank < best_rank:
+            best_rank, best_logprob = float(rank), float(log_probs[token_id])
+    return best_rank, best_logprob
