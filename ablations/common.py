@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -255,3 +256,186 @@ def whole_answer_prepare(item: dict, tokenizer) -> Example | str:
         target_positions=list(range(target_first, len(input_ids_list))),
         rank_scorable=try_single_token_id(tokenizer, target) is not None,
     )
+
+
+METHODS = ("jacobian", "logit")
+
+SUMMARY_COLUMNS = [
+    "training_step", "method", "total_examples", "usable_examples",
+    "mean_kl", "median_kl", "mean_rank_change", "mean_logprob_change",
+]
+
+PER_EXAMPLE_COLUMNS = [
+    "training_step", "method", "item_index", "name", "intermediate", "target",
+    "answer_surface", "rank_clean", "rank_ablated", "logprob_clean",
+    "logprob_ablated", "kl", "delta_rank", "delta_logprob",
+]
+
+
+def run_ablation(
+    task: Task, model_id: str, step: int, lens_path: Path, device: torch.device
+) -> tuple[list[dict], list[dict]]:
+    """Run one checkpoint's ablation; returns ``(summary_rows, per_example_rows)``.
+
+    ``logprob_clean`` / ``logprob_ablated`` hold the natural-log probability of
+    the scored answer at the readout (for whole-answer tasks, the
+    length-normalized mean over the target span). All six ablations report
+    this same unit.
+    """
+    revision = f"step{step}"
+    lens = load_lens(lens_path)
+    hf_model, tokenizer = load_model(model_id, revision, device)
+    lens_model = jlens.from_hf(hf_model, tokenizer, layout=pythia_layout(), compile=False)
+
+    all_items = json.loads((DATA_ROOT / f"{task.slug}.json").read_text(encoding="utf-8"))["items"]
+    workspace = band_layers(list(lens.source_layers), lens_model.n_layers)
+
+    rows: list[dict] = []
+    n_skipped = 0
+    for item_index, item in enumerate(all_items):
+        example = task.prepare_example(item, tokenizer)
+        if isinstance(example, str):
+            n_skipped += 1
+            continue
+
+        input_ids = torch.tensor([example.input_ids_list], dtype=torch.long, device=device)
+        with torch.no_grad():
+            clean_logits = hf_model(input_ids=input_ids).logits[0].float()
+        clean_readout = clean_logits[example.readout_position]
+        if task.whole_answer:
+            logprob_clean = teacher_forced_mean_logprob(
+                clean_logits, example.input_ids_list, example.target_positions
+            )
+            if example.rank_scorable:
+                rank_clean, _, answer_surface = best_rank_logprob(
+                    tokenizer, clean_readout, example.target
+                )
+            else:
+                rank_clean, answer_surface = float("nan"), ""
+        else:
+            rank_clean, logprob_clean, answer_surface = best_rank_logprob(
+                tokenizer, clean_readout, example.target
+            )
+
+        for method in METHODS:
+            hooks = {
+                layer: make_ablation_hook(
+                    lens_vector(lens, lens_model, layer, example.direction_token_id, method),
+                    example.ablate_positions,
+                )
+                for layer in workspace
+            }
+            ablated_logits = forward_with_hooks(hf_model, lens_model, input_ids, hooks)
+            ablated_readout = ablated_logits[example.readout_position]
+            kl = kl_divergence(clean_readout, ablated_readout)
+
+            if task.whole_answer:
+                logprob_ablated = teacher_forced_mean_logprob(
+                    ablated_logits, example.input_ids_list, example.target_positions
+                )
+                if example.rank_scorable:
+                    rank_ablated, _, _ = best_rank_logprob(
+                        tokenizer, ablated_readout, example.target
+                    )
+                else:
+                    rank_ablated = float("nan")
+            else:
+                rank_ablated, logprob_ablated, _ = best_rank_logprob(
+                    tokenizer, ablated_readout, example.target
+                )
+
+            rows.append({
+                "training_step": int(step),
+                "method": method,
+                "item_index": item_index,
+                "name": item["name"],
+                "intermediate": example.intermediate,
+                "target": example.target,
+                "answer_surface": answer_surface,
+                "rank_clean": rank_clean,
+                "rank_ablated": rank_ablated,
+                "logprob_clean": logprob_clean,
+                "logprob_ablated": logprob_ablated,
+                "kl": kl,
+                "delta_rank": rank_ablated - rank_clean,
+                "delta_logprob": logprob_ablated - logprob_clean,
+            })
+
+    del hf_model, lens_model, lens
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    per_example = pd.DataFrame(rows)
+    summary_rows: list[dict] = []
+    for method in METHODS:
+        sub = per_example[per_example["method"] == method] if len(per_example) else per_example
+        rank_rows = sub[sub["rank_clean"].notna()] if len(sub) else sub
+        summary_rows.append({
+            "training_step": int(step),
+            "method": method,
+            "total_examples": len(all_items),
+            "usable_examples": int(len(sub)),
+            "mean_kl": float(sub["kl"].mean()) if len(sub) else float("nan"),
+            "median_kl": float(sub["kl"].median()) if len(sub) else float("nan"),
+            "mean_rank_change": float(rank_rows["delta_rank"].mean()) if len(rank_rows) else float("nan"),
+            "mean_logprob_change": float(sub["delta_logprob"].mean()) if len(sub) else float("nan"),
+        })
+
+    print(f"model:            {model_id} @ {revision}")
+    print(f"workspace layers: {workspace}")
+    print(f"usable examples:  {len(all_items) - n_skipped}/{len(all_items)}")
+    for row in summary_rows:
+        print(
+            f"[{row['method']}] mean_kl={row['mean_kl']:.6f}  "
+            f"median_kl={row['median_kl']:.6f}  "
+            f"mean_rank_change={row['mean_rank_change']:.6f}  "
+            f"mean_logprob_change={row['mean_logprob_change']:.6f}"
+        )
+    return summary_rows, rows
+
+
+def run(task: Task) -> int:
+    parser = argparse.ArgumentParser(
+        description=f"{task.name} J-lens ablation across the workspace band"
+    )
+    parser.add_argument("--model", required=True,
+                        help="Hugging Face model id, e.g. EleutherAI/pythia-70m")
+    parser.add_argument("--steps", default=None,
+                        help="Comma-separated steps (default: every fitted lens for the model)")
+    parser.add_argument("--device", default=None,
+                        help="torch device (default: cuda if available else cpu)")
+    args = parser.parse_args()
+
+    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    model_folder = args.model.replace("/", "_")
+    jobs = sorted(
+        (int(re.search(r"_step(\d+)_jlens\.pt$", path.name).group(1)), path)
+        for path in (FITS_ROOT / model_folder).glob("*_jlens.pt")
+    )
+    if args.steps:
+        wanted = {int(s) for s in args.steps.split(",")}
+        jobs = [(step, path) for step, path in jobs if step in wanted]
+
+    summary_rows: list[dict] = []
+    per_example_rows: list[dict] = []
+    for step, lens_path in jobs:
+        print(f"\n=== step {step} ===")
+        step_summary, step_rows = run_ablation(task, args.model, step, lens_path, device)
+        summary_rows.extend(step_summary)
+        per_example_rows.extend(step_rows)
+
+    out_dir = RESULTS_ROOT / model_folder
+    out_dir.mkdir(parents=True, exist_ok=True)
+    summary_csv = out_dir / f"{task.name}_ablation_summary.csv"
+    per_example_csv = out_dir / f"{task.name}_ablation_per_example.csv"
+    summary = pd.DataFrame(summary_rows, columns=SUMMARY_COLUMNS)
+    summary = summary.sort_values(["training_step", "method"]).reset_index(drop=True)
+    summary.to_csv(summary_csv, index=False)
+    per_example = pd.DataFrame(per_example_rows, columns=PER_EXAMPLE_COLUMNS)
+    if len(per_example):
+        per_example = per_example.sort_values(["training_step", "item_index"]).reset_index(drop=True)
+    per_example.to_csv(per_example_csv, index=False)
+    print(f"\nSaved summary:     {summary_csv}")
+    print(f"Saved per-example: {per_example_csv} ({len(per_example)} rows)")
+    return 0
