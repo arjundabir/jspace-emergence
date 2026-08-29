@@ -1,30 +1,3 @@
-"""Workspace-capacity experiment (paper §4.2, Figure 31 E/F).
-
-Each trial is an 80-word comma-separated list built as four contiguous
-20-word blocks, one block per family (names, countries, surnames, cities),
-with block order shuffled per trial. Each block's words are sampled fresh
-from the family's canon — the first ``targets_per_family`` entries of its
-pool whose leading-space form is a single token under the target model.
-
-Metric: at every comma position, count how many of the list words read so
-far sit at band-min lens rank <= k (headline k = 25; k in {1, 5, 10, 25, 50}
-recorded). The blocked structure additionally exposes the paper's
-displacement effects: presence of the *current* block's words versus
-retention of the *previous* block's words after a category switch, plus
-pre-activation of not-yet-read same-family words and of the family's
-category-label (``proto``) words.
-
-Alongside the list words each trial scores a **matched lure** for every
-presented word: a same-family canon word this trial never presents, picked
-as the nearest unused neighbour in BPE merge rank (token id) — same
-category, single-token, approximately frequency-matched, differing only in
-whether the model has read it. The paired ranks give the retention
-specificity score ``S = median[log2(rank_lure / rank_seen)]``: S = 0 means a
-seen word is no more readable than an equally plausible unseen one.
-
-    python -m experiments.capacity
-"""
-
 from __future__ import annotations
 
 import random

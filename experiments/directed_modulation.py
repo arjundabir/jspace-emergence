@@ -1,23 +1,3 @@
-"""Directed-modulation experiment (paper §3.2 / §A.10, Figures 10 & 65).
-
-The model is given an instruction about a target X, then teacher-forced to
-copy an unrelated carrier sentence as the assistant turn; the lens is read
-over that response span to check whether X surfaces. The 24 instruction
-phrasings collapse via ``group_kind`` to {focus, control (mention),
-suppress}; a no-instruction ``none`` condition is the baseline floor.
-
-Targets come from two of the paper's three task families — **category**
-(``topic_categories``: every member word is a tracked token) and **math**
-(``math_problems``: the answer as digits and as an English number word). The
-third family (line-break width) is omitted: its underlying prose corpus is
-not released with the dataset.
-
-A trial is scored by the target's best lens rank over every (band layer,
-response position); hits at k in {1, 5, 10} are recorded.
-
-    python -m experiments.directed_modulation
-"""
-
 from __future__ import annotations
 
 import random

@@ -1,14 +1,3 @@
-"""Order-of-operations evaluation: readout at the token immediately preceding
-``target``, with each intermediate expanded to a synonym set.
-
-The two intermediates are the partial result and the pending operation.
-Following the dataset's convention, numbers expand to digit and word forms
-and operations to symbol and word forms; rank is the min over single-token
-synonyms at each layer.
-
-    python -m evals.order_ops
-"""
-
 from evals.common import Task, run, target_boundary_prepare
 
 _UNITS = [

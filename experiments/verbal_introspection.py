@@ -1,23 +1,3 @@
-"""Verbal-introspection experiment: injected-thought detection (paper §3.5,
-Figure 21).
-
-The model is told a thought may have been injected into its activations and
-asked to identify it (the four-turn ``intro_prompt``); the ``default``
-prefill is teacher-forced as the reply, ending in an open quote so the next
-predicted token is the reported word.
-
-For each concept, its steering direction — the unit-normalized lens vector,
-scaled by that layer's mean residual norm times a strength scalar — is added
-to the residual stream at every workspace-band layer and every token of the
-user's question turn; strength 0 is the shared control. Score: the rank and
-probability of the concept's surface in the next-token distribution at the
-open quote. Stronger injections making the model likelier to name the
-injected concept is the introspection signature. Concepts with no
-single-token surface form are excluded from the denominator.
-
-    python -m experiments.verbal_introspection
-"""
-
 from __future__ import annotations
 
 import pandas as pd

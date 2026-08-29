@@ -1,23 +1,3 @@
-"""Verbal-report experiment (paper §3.1, Figures 6 & 7).
-
-For each of 14 categories the model is prompted ``Think of a {category}.
-Answer in one word.``; the readout position is the final ``:``. The greedy
-next token is the model's answer and becomes the swap-out target: for each of
-the first 10 listed candidates (skipping the answer itself), the answer's
-representation is swapped for the candidate's — the lens-coordinate swap
-clamped at every prompt position across the workspace band — and the
-swapped-in candidate's rank and probability in the output distribution are
-recorded. Success is the candidate at rank 1.
-
-The swap-out direction is the greedy token's own lens vector, whatever the
-model produced — on early checkpoints that token is typically punctuation,
-which is the expected floor (``answer_is_candidate`` marks whether the clean
-answer was itself a category word). Candidates with no single-token form are
-excluded from the denominator.
-
-    python -m experiments.verbal_report
-"""
-
 from __future__ import annotations
 
 import pandas as pd

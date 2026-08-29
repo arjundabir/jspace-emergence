@@ -1,27 +1,3 @@
-"""Top-down summoning experiment (paper §3.6, Figure 24).
-
-Each item is a passage ending mid-clause with a latent property (spelling
-variety, register, tense, ...). Two questions are asked about the same
-passage: the shared ``q1`` (predict the next word — the property is *not*
-required) and the per-item ``q2`` (asks about the property — it *is*
-required). The lens is applied over the stimulus span under both questions;
-the summoning metric is the Q2 − Q1 difference in the fraction of stimulus
-positions whose band-min lens rank of any ``expected`` property word is
-within top-k, with the ``foil`` words tracked the same way as the control.
-
-**The question precedes the passage.** The readout is taken over stimulus
-positions, and in a causal model those activations condition only on earlier
-tokens; with the passage first, the prefix through the stimulus would be
-identical under q1 and q2 and Q2 − Q1 exactly 0 by construction.
-
-Causal test: each ``swaps[*]`` pair (property label -> foil label) is applied
-as the lens-coordinate swap at every stimulus position across the workspace
-band, under each question; the answer-shift criterion is the greedy answer
-moving to the foil set under Q2.
-
-    python -m experiments.top_down_summoning
-"""
-
 from __future__ import annotations
 
 import pandas as pd

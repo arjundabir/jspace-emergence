@@ -1,24 +1,3 @@
-"""Line-count selectivity experiment (paper §3.7, Figure 27).
-
-Each passage is wrapped with ``textwrap.fill`` at its ``width``; the
-ground-truth answer is the character count of the first wrapped line. Four
-conditions put different demands on that count: **none** (no question,
-prefill ``" The first line has"`` — automatic floor), **direct** (asks for
-the count, same prefill), **letter** (asks for the first letter of the
-spelled-out count — the count is needed internally but is not the answer
-token), and **continue** (asks to continue the passage with the same
-wrapping — the count is needed but never verbalized).
-
-The lens is applied at every prompt position across the workspace band,
-tracking the *expected* count (digits and English number word) and the
-generic *any-number* set (every two-digit token and number word 10-99).
-Selectivity is how much more strongly count information surfaces when the
-task requires it. A behavioral check at the final position records the
-expected answer's rank and probability.
-
-    python -m experiments.selectivity_linecount
-"""
-
 from __future__ import annotations
 
 import textwrap

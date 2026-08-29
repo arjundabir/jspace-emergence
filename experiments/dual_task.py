@@ -1,22 +1,3 @@
-"""Dual-task workspace-competition experiment (paper §A.17, Figure 73).
-
-The model holds one or two covert tasks while copying the fixed
-``carrier_sentence``, teacher-forced as the assistant turn. Each entry in
-``pairs`` couples a concept (with its tracked ``concept_words``) to an
-arithmetic problem ``base^exp - sub`` (tracked as the answer in digits and as
-an English number word). The concept+math arm runs ``concept`` alone,
-``math`` alone, and both with either named first; the concept+concept arm
-does the same over ``concept_pairs``.
-
-Both tasks are scored in *every* condition, so single-task conditions also
-provide each task's uninstructed floor. A task is *reachable* when any of its
-target tokens hits lens rank <= 5 anywhere in the band over the response
-span; interference = single-task − dual-task reachability. A task none of
-whose surfaces has a single-token form is excluded from the denominator.
-
-    python -m experiments.dual_task
-"""
-
 from __future__ import annotations
 
 import pandas as pd

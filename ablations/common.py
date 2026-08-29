@@ -1,20 +1,3 @@
-"""Shared machinery for the six J-lens ablations.
-
-Each ablation projects the first intermediate's normalized J-lens direction
-out of the residual stream at every prompt position, across the fitted layers
-inside the workspace band, then compares clean vs ablated next-token
-distributions at the task's readout position: KL(clean || ablated), and the
-clean vs ablated rank and log-probability of the scored answer. The logit-lens
-direction (J = I) is the baseline method.
-
-A task supplies its dataset slug and an example-preparation function;
-whole-answer tasks (poetry, multilingual) additionally score the full target
-span by teacher-forced length-normalized mean log-probability, so multi-token
-targets stay usable. Two combined CSVs per model are written under
-``results/ablations/<model>/``: ``<task>_ablation_summary.csv`` (one row per
-training step and method) and ``<task>_ablation_per_example.csv``.
-"""
-
 from __future__ import annotations
 
 import gc

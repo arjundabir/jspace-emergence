@@ -1,23 +1,3 @@
-"""Language-selectivity experiment (paper §3.7, Figure 26).
-
-Eight short passages (two per language: French, German, Spanish, Italian)
-run under two conditions built from the same template pair —
-``task.explicit_q`` (name an author who wrote in the passage's language: the
-language must be *explicitly used*) and ``task.automatic_q`` (continue the
-passage: the language is only processed *automatically*). The
-``intermediates[category]`` label words are tracked in the lens over the
-question tokens following the passage. Selectivity is the explicit −
-automatic hit rate: workspace content should carry the language label mainly
-when the task demands reporting it.
-
-Behavioral check at the final prompt position: the minimum next-token rank
-over the correct language's ``authors`` versus the best rank over the other
-three languages' authors. Words with no single-token form are excluded from
-their denominators.
-
-    python -m experiments.selectivity_language
-"""
-
 from __future__ import annotations
 
 import pandas as pd

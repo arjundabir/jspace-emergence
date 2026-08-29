@@ -1,30 +1,3 @@
-"""Ignition experiment: ambiguous-input interpretation (paper §4.1.1, Figure 29).
-
-A carrier sentence's ``{W}`` token has its input embedding replaced by the
-mixture ``alpha * emb(A) + (1 - alpha) * emb(B)``, with alpha swept 0 -> 1.
-The readout at each layer is A's reciprocal-rank share
-``(1/rank_A) / (1/rank_A + 1/rank_B)`` from the lens at the ``{W}`` position.
-A trial's threshold is the alpha where the share crosses 0.5 at the deepest
-workspace-band layer; reported per layer are the 10% -> 90% transition width
-in alpha (on the share's monotone envelope) and the share's bimodality across
-trials at each trial's own threshold — sharp, bimodal responses at
-intermediate depth are the ignition signature.
-
-Concept pairs: 16 of the unordered pairs of ``countries_12`` in the country
-carriers; ``alt_words`` each paired with France, and the ``idiom_pairs`` /
-``scrambled_pairs`` controls, in the neutral noun carriers. Words participate
-through their leading-space single-token form; pairs without one are skipped
-and counted.
-
-Alongside the sweep, **matched distractors** — 4 same-pool words absent from
-the mixture, nearest the pair in BPE merge rank — are scored beside the pair
-members, giving the target-specificity score
-``S = median[log2(rank_distractor / rank_correct)]`` where the correct target
-is the pair member the mixture favours.
-
-    python -m experiments.ignition
-"""
-
 from __future__ import annotations
 
 import itertools

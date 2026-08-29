@@ -1,15 +1,3 @@
-"""Fit Jacobian lenses at float32, one checkpoint at a time, on a single GPU.
-
-Everything is float32 end to end: TF32 matmuls are disabled, checkpoints load
-as fp32 (exact at every size; see load_models.py), and the fitted Jacobians
-are stored fp32 (``JacobianLens.save`` defaults to float16, which is a lossy
-downcast of the fit). Fits every checkpoint step of one model, writing
-``fits/<model>/<model>_step<N>_jlens.pt``.
-
-    python -m lens.fit_lens
-    python -m lens.fit_lens --model EleutherAI/pythia-6.9b --dim-batch 107
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -55,8 +43,7 @@ def fit_one(model_id: str, step: int, prompts, dim_batch: int, device: torch.dev
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--dim-batch", type=int, default=512,
                         help="Jacobian columns per backward pass; lower it to fit "

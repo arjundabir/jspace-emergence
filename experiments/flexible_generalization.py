@@ -1,21 +1,3 @@
-"""Flexible-generalization experiment (paper §3.4, Figures 18 & 19).
-
-Each of four categories pairs 4 argument values with 4 function templates. A
-trial fills one template with one arg; baseline grading checks that the
-greedy next token matches the function's answer for that arg.
-
-The flexibility test swaps the lens representation of the in-context
-argument token for another argument from the same category — the
-lens-coordinate swap clamped at every prompt position across the workspace
-band — and scores the next token against the *new* arg's answer (success =
-that answer at top-1). The swap runs at alpha = 1 and 2, and each argument's
-*workspace loading* (cosine similarity between the residual stream and the
-arg's lens vector over the argument and readout positions across the band)
-is recorded, since loading predicts swap success in the paper.
-
-    python -m experiments.flexible_generalization
-"""
-
 from __future__ import annotations
 
 import pandas as pd

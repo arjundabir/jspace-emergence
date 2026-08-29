@@ -1,22 +1,3 @@
-"""Load Pythia checkpoints with their true per-step weights, in float32.
-
-Two traps make a naive ``from_pretrained(..., revision="stepN")`` wrong here:
-
-* ``EleutherAI/pythia-2.8b`` ships a stray consolidated ``model.safetensors``
-  holding main's fully-trained weights on every step branch except step143000,
-  and ``transformers`` prefers it over the branch's correct per-step shards
-  (HF discussion EleutherAI/pythia-2.8b#5) -- so every "checkpoint" silently
-  loads the final model. Steps 40000-130000 additionally ship no per-step
-  shards at all; their true weights exist only in ``pytorch_model.bin``.
-  ``resolve_model_source`` routes around both and refuses the consolidated
-  fallback.
-* Loading must be float32. That is exact at every size: 70m/160m/410m/1.4b
-  ship fp32, and 2.8b/6.9b ship fp16, whose upcast is lossless. float16
-  loading is unsafe: the transported residual ``J_l @ h`` can exceed fp16's
-  65504 ceiling, and inf -> LayerNorm -> NaN logits makes a rank readout
-  return 1 for every token -- a silent perfect score instead of a crash.
-"""
-
 from __future__ import annotations
 
 import time

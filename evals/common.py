@@ -1,20 +1,3 @@
-"""Shared machinery for the six J-lens evaluations.
-
-Every evaluation follows the same protocol: for each fitted lens, read the
-residual out at a task-defined prompt position, decode it through the J-lens
-and through the logit-lens (J = I) baseline, and score the task's intermediate
-concepts by one-based rank over the vocabulary. Metrics are pass@k over
-intermediates with min rank across fitted layers, and normalized log-AUC on
-k in {1, 2, 5, 10, 20, 50, 100}. A capability control records whether the
-checkpoint can produce the task's answer at all.
-
-A task supplies its dataset slug, its readout-position logic, and (for
-order-of-operations) a synonym expander; everything else lives here. One JSON
-artifact per lens is written under ``results/evals/<model>/<step>/``, plus a
-gzipped CSV of every (item, intermediate, surface, layer, method) score, and
-``emergence_summary_<eval>.csv`` under ``results/evals/``.
-"""
-
 from __future__ import annotations
 
 import hashlib

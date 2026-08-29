@@ -1,31 +1,3 @@
-"""Shared infrastructure for the eleven global-workspace experiment scripts.
-
-The experiments replicate the prompt-set experiments from *Verbalizable
-Representations Form a Global Workspace in Language Models*
-(<https://transformer-circuits.pub/2026/workspace/index.html>) over every
-fitted lens in ``fits/``, writing one JSON artifact per lens under
-``results/experiments/<model>/<step>/`` and an
-``emergence_summary_<name>.csv`` rebuilt at the end of every run.
-
-Paper protocol conventions implemented here (see
-``jacobian-lens/data/experiments/README.md``):
-
-- **Workspace band** — the contiguous mid-network layer range where workspace
-  content is read; the fixed fractional band is applied to each lens's fitted
-  layers.
-- **Methods** — every readout and intervention is scored for the fitted
-  Jacobian lens (``method="jacobian"``) and the logit-lens baseline
-  (``method="logit"``, i.e. ``J = I``) on identical items.
-- **Surface forms** — a word is scored in both its bare and leading-space
-  single-token forms and the minimum rank is taken; words with no
-  single-token form are excluded from the denominator, not scored as
-  failures.
-- **Chat framing** — the paper runs on chat-formatted models. The Pythia
-  checkpoints are base models, so instruction prompts are emulated as plain
-  ``Human: ... \\n\\nAssistant: ...`` text with the response teacher-forced.
-  On early checkpoints a null result is expected and is itself the datum.
-"""
-
 from __future__ import annotations
 
 import json

@@ -1,15 +1,3 @@
-"""Poetry evaluation: readout at the newline between the couplet's two lines.
-
-At that position the model has read none of line 2 and its actual next token
-is whitespace, so the rhyme word appearing in the lens means it has already
-been chosen. The couplet is completed with the rhyme word so the capability
-control can read the model's next-token distribution at the position that
-precedes it; that cannot affect the lens readout, which sits at the earlier
-newline.
-
-    python -m evals.poetry
-"""
-
 from evals.common import Task, encode_with_offsets, run
 
 

@@ -1,26 +1,3 @@
-"""Probe-swap experiment: internal reasoning (paper §3.3, Figures 14-16).
-
-90 two-hop factual prompts whose ``prompt`` ends just before the answer.
-``intermediate`` is the latent bridge entity (e.g. Amazon -> *Brazil* ->
-Portuguese), ``swap_to`` the replacement, and ``swap_answer`` the answer the
-replacement implies. Per item: **baseline** (greedy next token at the answer
-boundary == ``answer``), **lens readout** (the intermediate's best rank over
-every band layer and prompt position), and **swap** (the intermediate's
-representation replaced with ``swap_to``'s via the lens-coordinate swap at
-every prompt position across the band; success is ``swap_answer`` becoming
-the greedy next token).
-
-One protocol deviation from the paper, forced by the released data: the paper
-swaps along *linear-probe* directions, but the probe training data is not
-released, so the swap uses the same lens-vector directions as every other
-causal experiment here. The answer boundary is resolved by offset alignment
-on the space-joined ``prompt + answer``; items whose ``answer`` and
-``swap_answer`` tokenize to different prompt-side prefixes are excluded from
-the swap comparison.
-
-    python -m experiments.probe_swap
-"""
-
 from __future__ import annotations
 
 import pandas as pd

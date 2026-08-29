@@ -1,15 +1,3 @@
-"""Load a fitted Jacobian lens, or a checkpoint together with its lens.
-
-Fitted lenses live under ``fits/`` as
-``fits/<model>/<model>_<revision>_jlens.pt``, with the Jacobians stored
-float32 (storing them float16 is a lossy downcast of the fit; see
-fit_lens.py). Lens files are mmapped rather than copied into RAM.
-
-    from lens.load_lens import load_pair
-    pair = load_pair("EleutherAI/pythia-6.9b", "step143000")
-    logits = pair.lens_logits(residual, layer=20, method="jacobian")
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
