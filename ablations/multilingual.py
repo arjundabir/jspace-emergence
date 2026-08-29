@@ -6,7 +6,7 @@ teacher-forced length-normalized mean log-probability, and rank is reported
 only for single-token targets. Usable when the first intermediate is
 single-token.
 
-    python -m ablations.multilingual --model EleutherAI/pythia-70m
+    python -m ablations.multilingual
 """
 
 from ablations.common import Task, run, whole_answer_prepare

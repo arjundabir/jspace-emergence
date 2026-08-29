@@ -7,7 +7,6 @@ and operations to symbol and word forms; rank is the min over single-token
 synonyms at each layer.
 
     python -m evals.order_ops
-    python -m evals.order_ops --limit 1 --force
 """
 
 from evals.common import Task, run, target_boundary_prepare

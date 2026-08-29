@@ -3,11 +3,11 @@
 Everything is float32 end to end: TF32 matmuls are disabled, checkpoints load
 as fp32 (exact at every size; see load_models.py), and the fitted Jacobians
 are stored fp32 (``JacobianLens.save`` defaults to float16, which is a lossy
-downcast of the fit).
+downcast of the fit). Fits every checkpoint step of one model, writing
+``fits/<model>/<model>_step<N>_jlens.pt``.
 
-    python -m lens.fit_lens                                  # 70m, all steps
-    python -m lens.fit_lens --model EleutherAI/pythia-410m
-    python -m lens.fit_lens --steps 100000,130000,143000 --force
+    python -m lens.fit_lens
+    python -m lens.fit_lens --model EleutherAI/pythia-6.9b --dim-batch 107
 """
 
 from __future__ import annotations
@@ -21,24 +21,19 @@ import time
 import torch
 
 from lens.load_lens import lens_path_for, pythia_layout
-from lens.load_models import CHECKPOINT_STEPS, REPO_ROOT, load_model
+from lens.load_models import CHECKPOINT_STEPS, load_model
 
 logger = logging.getLogger("fit_lens")
 
 DEFAULT_MODEL = "EleutherAI/pythia-70m"
-FIT_CHECKPOINT_DIR = REPO_ROOT / ".cache" / "fit_checkpoints"
+N_PROMPTS = 1000
+MAX_SEQ_LEN = 128
 
 
-def fit_one(model_id: str, step: int, prompts, args, device: torch.device) -> None:
+def fit_one(model_id: str, step: int, prompts, dim_batch: int, device: torch.device) -> None:
     import jlens
 
     lens_path = lens_path_for(model_id, f"step{step}")
-    if lens_path.is_file() and not args.force:
-        logger.info("skip step%d (lens exists)", step)
-        return
-    name = model_id.replace("/", "_")
-    fit_ckpt = FIT_CHECKPOINT_DIR / name / f"{name}_step{step}_fit.ckpt"
-    fit_ckpt.parent.mkdir(parents=True, exist_ok=True)
     lens_path.parent.mkdir(parents=True, exist_ok=True)
 
     t0 = time.perf_counter()
@@ -47,11 +42,8 @@ def fit_one(model_id: str, step: int, prompts, args, device: torch.device) -> No
     lens = jlens.fit(
         lens_model,
         prompts=prompts,
-        max_seq_len=args.max_seq_len,
-        dim_batch=args.dim_batch,
-        checkpoint_path=str(fit_ckpt),
-        checkpoint_every=args.checkpoint_every,
-        resume=not args.force,
+        max_seq_len=MAX_SEQ_LEN,
+        dim_batch=dim_batch,
     )
     # JacobianLens.save defaults to float16, a lossy downcast of the fit; pin fp32.
     lens.save(str(lens_path), dtype=torch.float32)
@@ -62,24 +54,14 @@ def fit_one(model_id: str, step: int, prompts, args, device: torch.device) -> No
     torch.cuda.empty_cache()
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", default=DEFAULT_MODEL)
-    p.add_argument("--steps", default=None,
-                   help=f"Comma-separated steps; default all {len(CHECKPOINT_STEPS)}")
-    p.add_argument("--n-prompts", type=int, default=1000)
-    p.add_argument("--max-seq-len", type=int, default=128)
-    p.add_argument("--dim-batch", type=int, default=512)
-    p.add_argument("--checkpoint-every", type=int, default=100)
-    p.add_argument("--device", default="cuda")
-    p.add_argument("--force", action="store_true",
-                   help="Re-fit even if the lens exists; ignores fit checkpoints")
-    return p.parse_args()
-
-
 def main() -> int:
-    args = parse_args()
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--dim-batch", type=int, default=512,
+                        help="Jacobian columns per backward pass; lower it to fit "
+                             "GPU memory on the larger models")
+    args = parser.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -88,22 +70,18 @@ def main() -> int:
     torch.backends.cudnn.allow_tf32 = False
     torch.set_float32_matmul_precision("highest")
 
-    device = torch.device(args.device)
-    steps = ([int(s) for s in args.steps.split(",") if s.strip()]
-             if args.steps else list(CHECKPOINT_STEPS))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     from jlens.examples import load_wikitext_prompts
 
-    logger.info("loading %d wikitext prompts", args.n_prompts)
-    prompts = load_wikitext_prompts(args.n_prompts, min_chars=600)
-    if len(prompts) < args.n_prompts:
-        logger.warning("got %d prompts, wanted %d", len(prompts), args.n_prompts)
+    logger.info("loading %d wikitext prompts", N_PROMPTS)
+    prompts = load_wikitext_prompts(N_PROMPTS, min_chars=600)
 
-    logger.info("fitting %s at fp32: %d checkpoints, dim_batch=%d, seq_len=%d",
-                args.model, len(steps), args.dim_batch, args.max_seq_len)
-    for step in steps:
-        fit_one(args.model, step, prompts, args, device)
-    logger.info("done: %d checkpoints", len(steps))
+    logger.info("fitting %s at fp32: %d checkpoints, dim_batch=%d",
+                args.model, len(CHECKPOINT_STEPS), args.dim_batch)
+    for step in CHECKPOINT_STEPS:
+        fit_one(args.model, step, prompts, args.dim_batch, device)
+    logger.info("done: %d checkpoints", len(CHECKPOINT_STEPS))
     return 0
 
 

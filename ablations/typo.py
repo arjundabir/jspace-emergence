@@ -5,7 +5,7 @@ fragment of the misspelling). Usable when the correction
 (``intermediates[0]``) is single-token; the correction itself is scored as
 the answer, and its direction is ablated across the workspace band.
 
-    python -m ablations.typo --model EleutherAI/pythia-70m
+    python -m ablations.typo
 """
 
 from ablations.common import Task, prompt_final_prepare, run

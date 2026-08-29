@@ -6,7 +6,6 @@ correct spelling appearing in the lens is evidence of internal correction
 rather than of imminent output. There is no answer target.
 
     python -m evals.typo
-    python -m evals.typo --limit 1 --force
 """
 
 from evals.common import Task, prompt_final_prepare, run

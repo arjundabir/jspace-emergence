@@ -17,7 +17,6 @@ gzipped CSV of every (item, intermediate, surface, layer, method) score, and
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import random
@@ -594,31 +593,13 @@ def rebuild_summary(output_dir: Path, eval_name: str) -> Path | None:
 
 
 def run(task: Task) -> int:
-    parser = argparse.ArgumentParser(
-        description=f"{task.name} J-lens evaluation over every fitted lens in fits/"
-    )
-    parser.add_argument("--force", action="store_true",
-                        help="Re-run even if the output JSON already exists")
-    parser.add_argument("--limit", type=int, default=None,
-                        help="Evaluate at most this many lenses (sorted by path)")
-    parser.add_argument("--lens", type=Path, default=None,
-                        help="Evaluate only this *_jlens.pt file")
-    parser.add_argument("--device", default=None,
-                        help="torch device (default: cuda if available else cpu)")
-    args = parser.parse_args()
-
     random.seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
     torch.manual_seed(RANDOM_SEED)
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     eval_path, items, dataset_sha256 = load_eval_items(task)
-    if args.lens is not None:
-        lenses = [args.lens.expanduser().resolve()]
-    else:
-        lenses = discover_lenses(FITS_ROOT)
-        if args.limit is not None:
-            lenses = lenses[: args.limit]
+    lenses = discover_lenses(FITS_ROOT)
 
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
     print(f"Evaluation: {task.name} ({len(items)} items from {eval_path.name})")
@@ -626,9 +607,6 @@ def run(task: Task) -> int:
 
     for index, lens_path in enumerate(lenses, start=1):
         out_path = output_path_for_lens(lens_path, RESULTS_ROOT, task.name)
-        if out_path.is_file() and not args.force:
-            print(f"[{index}/{len(lenses)}] skip (exists): {out_path.name}")
-            continue
         print(f"[{index}/{len(lenses)}] {lens_path.name}")
         started = time.perf_counter()
         payload, target_scores = evaluate_lens(task, lens_path, items, dataset_sha256, device)

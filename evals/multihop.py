@@ -6,7 +6,6 @@ appearing in the lens there means the hop was resolved internally. The target
 itself is the capability control's answer.
 
     python -m evals.multihop
-    python -m evals.multihop --limit 1 --force
 """
 
 from evals.common import Task, run, target_boundary_prepare

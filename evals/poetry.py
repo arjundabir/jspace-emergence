@@ -8,7 +8,6 @@ precedes it; that cannot affect the lens readout, which sits at the earlier
 newline.
 
     python -m evals.poetry
-    python -m evals.poetry --limit 1 --force
 """
 
 from evals.common import Task, encode_with_offsets, run

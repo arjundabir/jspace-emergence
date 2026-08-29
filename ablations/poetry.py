@@ -6,7 +6,7 @@ taken at the readout before the answer span, and the whole answer is scored
 by teacher-forced length-normalized mean log-probability, so multi-token
 rhyme words stay usable; rank is additionally reported for single-token ones.
 
-    python -m ablations.poetry --model EleutherAI/pythia-70m
+    python -m ablations.poetry
 """
 
 from ablations.common import Task, run, whole_answer_prepare

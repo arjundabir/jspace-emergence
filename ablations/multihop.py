@@ -4,7 +4,7 @@ Encode ``prompt + target``; readout is the token immediately preceding the
 target. The bridging entity (``intermediates[0]``) supplies the ablated
 direction and the target is scored; both must be single-token.
 
-    python -m ablations.multihop --model EleutherAI/pythia-70m
+    python -m ablations.multihop
 """
 
 from ablations.common import Task, run, target_boundary_prepare

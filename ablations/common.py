@@ -17,7 +17,6 @@ training step and method) and ``<task>_ablation_per_example.csv``.
 
 from __future__ import annotations
 
-import argparse
 import gc
 import json
 import re
@@ -396,46 +395,36 @@ def run_ablation(
 
 
 def run(task: Task) -> int:
-    parser = argparse.ArgumentParser(
-        description=f"{task.name} J-lens ablation across the workspace band"
-    )
-    parser.add_argument("--model", required=True,
-                        help="Hugging Face model id, e.g. EleutherAI/pythia-70m")
-    parser.add_argument("--steps", default=None,
-                        help="Comma-separated steps (default: every fitted lens for the model)")
-    parser.add_argument("--device", default=None,
-                        help="torch device (default: cuda if available else cpu)")
-    args = parser.parse_args()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    for model_dir in sorted(FITS_ROOT.iterdir()):
+        if not model_dir.is_dir():
+            continue
+        jobs = sorted(
+            (int(re.search(r"_step(\d+)_jlens\.pt$", path.name).group(1)), path)
+            for path in model_dir.glob("*_jlens.pt")
+        )
+        if not jobs:
+            continue
+        model_id = model_dir.name.replace("EleutherAI_", "EleutherAI/", 1)
 
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    model_folder = args.model.replace("/", "_")
-    jobs = sorted(
-        (int(re.search(r"_step(\d+)_jlens\.pt$", path.name).group(1)), path)
-        for path in (FITS_ROOT / model_folder).glob("*_jlens.pt")
-    )
-    if args.steps:
-        wanted = {int(s) for s in args.steps.split(",")}
-        jobs = [(step, path) for step, path in jobs if step in wanted]
+        summary_rows: list[dict] = []
+        per_example_rows: list[dict] = []
+        for step, lens_path in jobs:
+            print(f"\n=== {model_dir.name} step {step} ===")
+            step_summary, step_rows = run_ablation(task, model_id, step, lens_path, device)
+            summary_rows.extend(step_summary)
+            per_example_rows.extend(step_rows)
 
-    summary_rows: list[dict] = []
-    per_example_rows: list[dict] = []
-    for step, lens_path in jobs:
-        print(f"\n=== step {step} ===")
-        step_summary, step_rows = run_ablation(task, args.model, step, lens_path, device)
-        summary_rows.extend(step_summary)
-        per_example_rows.extend(step_rows)
-
-    out_dir = RESULTS_ROOT / model_folder
-    out_dir.mkdir(parents=True, exist_ok=True)
-    summary_csv = out_dir / f"{task.name}_ablation_summary.csv"
-    per_example_csv = out_dir / f"{task.name}_ablation_per_example.csv"
-    summary = pd.DataFrame(summary_rows, columns=SUMMARY_COLUMNS)
-    summary = summary.sort_values(["training_step", "method"]).reset_index(drop=True)
-    summary.to_csv(summary_csv, index=False)
-    per_example = pd.DataFrame(per_example_rows, columns=PER_EXAMPLE_COLUMNS)
-    if len(per_example):
+        out_dir = RESULTS_ROOT / model_dir.name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        summary_csv = out_dir / f"{task.name}_ablation_summary.csv"
+        per_example_csv = out_dir / f"{task.name}_ablation_per_example.csv"
+        summary = pd.DataFrame(summary_rows, columns=SUMMARY_COLUMNS)
+        summary = summary.sort_values(["training_step", "method"]).reset_index(drop=True)
+        summary.to_csv(summary_csv, index=False)
+        per_example = pd.DataFrame(per_example_rows, columns=PER_EXAMPLE_COLUMNS)
         per_example = per_example.sort_values(["training_step", "item_index"]).reset_index(drop=True)
-    per_example.to_csv(per_example_csv, index=False)
-    print(f"\nSaved summary:     {summary_csv}")
-    print(f"Saved per-example: {per_example_csv} ({len(per_example)} rows)")
+        per_example.to_csv(per_example_csv, index=False)
+        print(f"\nSaved summary:     {summary_csv}")
+        print(f"Saved per-example: {per_example_csv} ({len(per_example)} rows)")
     return 0

@@ -4,7 +4,7 @@ Same protocol as multihop: encode ``prompt + target``, readout at the token
 before the target, ablate the literal ``intermediates[0]`` direction (no
 synonym expansion), and score the target; both must be single-token.
 
-    python -m ablations.order_ops --model EleutherAI/pythia-70m
+    python -m ablations.order_ops
 """
 
 from ablations.common import Task, run, target_boundary_prepare

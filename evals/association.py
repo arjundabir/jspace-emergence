@@ -6,7 +6,6 @@ context. There is no answer target; the capability control records only the
 model's own top-1.
 
     python -m evals.association
-    python -m evals.association --limit 1 --force
 """
 
 from evals.common import Task, prompt_final_prepare, run

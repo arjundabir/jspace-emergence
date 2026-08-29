@@ -7,7 +7,6 @@ under the GPT-NeoX BPE; those are reported in tokenization_coverage and
 excluded from the denominator rather than scored as failures.
 
     python -m evals.multilingual
-    python -m evals.multilingual --limit 1 --force
 """
 
 from evals.common import Task, run, target_boundary_prepare
